@@ -1,0 +1,6 @@
+# Cases
+data/**/
+
+# JetBrains
+.idea
+cmake-build-*
