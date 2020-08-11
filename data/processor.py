@@ -94,8 +94,8 @@ def merge(function_path, timeline_path, memory_path, pattern_path):
             # TODO: fix it
             size = 0
         else:
-            size = (functools.reduce(lambda x, y: x * y, oprand['shape']) if oprand['shape'] else 1) * sizeof[
-                oprand['type']]
+            size = (functools.reduce(lambda x, y: x * y, oprand['shape']) if oprand['shape'] else 1) * \
+                   sizeof[oprand['type']]
         assert oprand['arch'] == 'CUDA'
         oprands.append(Oprand(identity, size))
 
