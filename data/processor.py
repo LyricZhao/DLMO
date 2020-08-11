@@ -3,7 +3,7 @@ import json
 import os
 import functools
 
-Oprand = namedtuple('Oprand', ['id', 'size'])
+Operand = namedtuple('Operand', ['id', 'size'])
 Record = namedtuple('Record', ['name', 'ins', 'outs', 'workspace', 'time'])
 
 
@@ -85,19 +85,19 @@ def merge(function_path, timeline_path, memory_path, pattern_path):
             assert len(workspaces[name]) % count == 0, name
             # print(name, count, len(workspaces[name]), len(times[name]))
 
-    # Generator oprands
-    oprands = []
+    # Generator operands
+    operands = []
     sizeof = {'Float32': 4, 'Int64': 8, 'Uint8': 1}
-    for oprand in data:
-        identity = oprand['id']
-        if not oprand['type']:
+    for operand in data:
+        identity = operand['id']
+        if not operand['type']:
             # TODO: fix it
             size = 0
         else:
-            size = (functools.reduce(lambda x, y: x * y, oprand['shape']) if oprand['shape'] else 1) * \
-                   sizeof[oprand['type']]
-        assert oprand['arch'] == 'CUDA'
-        oprands.append(Oprand(identity, size))
+            size = (functools.reduce(lambda x, y: x * y, operand['shape']) if operand['shape'] else 1) * \
+                   sizeof[operand['type']]
+        assert operand['arch'] == 'CUDA'
+        operands.append(Operand(identity, size))
 
     # Generate code
     average = lambda l: sum(l[1:]) / (len(l) - 1)
@@ -117,7 +117,7 @@ def merge(function_path, timeline_path, memory_path, pattern_path):
         records.append(record)
 
     # Write into file
-    content = {'oprands': oprands, 'records': records}
+    content = {'operands': operands, 'records': records}
     with open(pattern_path, 'w') as file:
         json.dump(content, file)
 
