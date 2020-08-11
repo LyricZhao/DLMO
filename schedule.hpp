@@ -6,6 +6,9 @@
 #include "json.hpp"
 #include "utils.hpp"
 
+static constexpr size_t PCIE_GBPS = Unit::GiB(12);
+static constexpr double PCIE_LATENCY = Unit::ms(0.02);
+
 enum TaskType {
     Compute,
     Transfer,
@@ -16,11 +19,11 @@ class Task;
 typedef std::shared_ptr<Task> TaskHandle;
 
 class Task {
-    std::string name;
-    double time;
-    size_t workspace;
-    TaskType type;
-    TaskHandle *reference;
+    std::string name = "none";
+    uint64_t time = 0;
+    size_t workspace = 0;
+    TaskType type = Compute;
+    TaskHandle reference;
     std::vector<int> ins, outs;
 
 public:
@@ -39,7 +42,7 @@ public:
         fill(task->ins, json[1]);
         fill(task->outs, json[2]);
         task->workspace = json[3];
-        task->time = json[4];
+        task->time = Unit::ms(static_cast<double>(json[4]));
 
         // TODO: JSON file has .host2device-like operators
         assert(task->name != ".host2device");

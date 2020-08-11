@@ -17,7 +17,7 @@ std::string pretty(size_t value, size_t scale, const char* *units, int m) {
 }
 
 std::string prettyBytes(size_t size) {
-    static const char* units[5] = {"Bytes", "KBytes", "MBytes", "GBytes"};
+    static const char* units[5] = {"B", "KiB", "MiB", "GiB"};
     return pretty(size, 1024, units, 4);
 }
 
@@ -53,29 +53,48 @@ void warning(const char *fmt, ...) {
 }
 
 class Unit {
-    static constexpr size_t unit = 1024;
 public:
     template<typename T>
-    static size_t B(T size) {
+    static constexpr size_t B(T size) {
         return size;
     }
 
     template<typename T>
-    static size_t KB(T size) {
-        return size * unit;
+    static constexpr size_t KiB(T size) {
+        return size * 1024ull;
     }
 
     template<typename T>
-    static size_t MB(T size) {
-        return size * unit * unit;
+    static constexpr size_t MiB(T size) {
+        return size * 1024ull * 1024ull;
     }
 
     template<typename T>
-    static size_t GB(T size) {
-        return size * unit * unit * unit;
+    static constexpr size_t GiB(T size) {
+        return size * 1024ull * 1024ull * 1024ull;
     }
 
-    static size_t from(const std::string &text) {
+    template<typename T>
+    static constexpr uint64_t ns(T time) {
+        return time;
+    }
+
+    template<typename T>
+    static constexpr uint64_t us(T time) {
+        return static_cast<uint64_t>(time) * 1000ull;
+    }
+
+    template<typename T>
+    static constexpr uint64_t ms(T time) {
+        return static_cast<uint64_t>(time) * 1000000ull;
+    }
+
+    template<typename T>
+    static constexpr uint64_t s(T time) {
+        return static_cast<uint64_t>(time) * 1000000000ull;
+    }
+
+    static size_t fromText(const std::string &text) {
         size_t size = 0;
         int index = 0;
         while (index < text.size() && isdigit(text.at(index))) {
@@ -86,13 +105,13 @@ public:
         } else if (text.at(index) == 'B') {
             return B(size);
         } else if (text.at(index) == 'K') {
-            return KB(size);
+            return KiB(size);
         } else if (text.at(index) == 'M') {
-            return MB(size);
+            return MiB(size);
         } else if (text.at(index) == 'G') {
-            return GB(size);
+            return GiB(size);
         }
-        error("Failed to parse size (format: {num}{B/KB/MB/GB}, e.g. 8GB)");
+        error("Failed to parse size (format: {num}{B/KiB/MiB/GiB}, e.g. 8GiB)");
         return 0;
     }
 };

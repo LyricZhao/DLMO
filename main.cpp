@@ -16,7 +16,7 @@ int main(int argc, char **argv) {
     std::string path, limit;
     bool recompute_on, swap_on;
     while (config >> path >> limit >> recompute_on >> swap_on) {
-        auto runner = Runner(path, Unit::from(limit), recompute_on, swap_on);
+        auto runner = Runner(path, Unit::fromText(limit), recompute_on, swap_on);
         runner.run();
     }
 

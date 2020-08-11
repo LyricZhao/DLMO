@@ -11,7 +11,7 @@ int main() {
         return speed / static_cast<double>(1u << 30u);
     };
 
-    for (size_t size: {Unit::B(4), Unit::KB(1), Unit::MB(1), Unit::GB(1), Unit::GB(2), Unit::GB(4)}) {
+    for (size_t size: {Unit::B(4), Unit::KiB(1), Unit::MiB(1), Unit::GiB(1), Unit::GiB(2), Unit::GiB(4)}) {
         std::cout << "Running test with " << prettyBytes(size) << " ... " << std::endl;
 
         // Init
@@ -33,9 +33,9 @@ int main() {
         cudaFreeHost(host_ptr);
         cudaFree(device_ptr);
         std::cout << " > Host to device: " << prettyNanoseconds(host2device_duration)
-            << " (" << bandwidth(size, host2device_duration) << "GB/s)" << std::endl;
+            << " (" << bandwidth(size, host2device_duration) << " GiB/s)" << std::endl;
         std::cout << " > Device to host: " << prettyNanoseconds(device2host_duration)
-            << " (" << bandwidth(size, device2host_duration) << "GB/s)" << std::endl;
+            << " (" << bandwidth(size, device2host_duration) << " GiB/s)" << std::endl;
     }
     return 0;
 }
