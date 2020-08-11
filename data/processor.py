@@ -7,19 +7,55 @@ Oprand = namedtuple('Oprand', ['id', 'size'])
 Record = namedtuple('Record', ['name', 'ins', 'outs', 'workspace', 'time'])
 
 
-def merge(function_path, timeline_path, pattern_path):
+def same(l):
+    x = l[0]
+    for y in l[1:]:
+        if x != y:
+            return False
+    return True
+
+
+def merge(function_path, timeline_path, memory_path, pattern_path):
     # Read traced functions
     with open(function_path, 'r') as file:
         functions = json.load(file)
         codes = functions['code']
         data = functions['data']
+        first_code, last_code = None, None
+        for code in codes:
+            if code['name'].startswith('.'):
+                continue
+            if not first_code:
+                first_code = code['name']
+            last_code = code['name']
 
     # Read timeline
     with open(timeline_path, 'r') as file:
         n = int(file.readline())
-        _ = [file.readline() for _ in range(n)]
+        cuda_streams = []
+        for i in range(n):
+            line = file.readline()
+            if line.count('Cuda') > 0:
+                stream_id, _ = line.split(',')
+                cuda_streams.append(stream_id)
         times = {}
-        for line in file.readlines():
+        lines = file.readlines()
+        for i in range(len(lines)):
+            if lines[i].count(first_code):
+                lines = lines[i:]
+                break
+        for i in range(len(lines) - 1, -1, -1):
+            if lines[i].count(last_code):
+                lines = lines[:i + 1]
+                break
+        for line in lines:
+            is_cuda = False
+            for cuda_stream in cuda_streams:
+                if line.count(cuda_stream):
+                    is_cuda = True
+                    break
+            if not is_cuda:
+                continue
             try:
                 name, info = line.split(':')
                 _, _, begin, end, _ = info.split(',')
@@ -27,6 +63,14 @@ def merge(function_path, timeline_path, pattern_path):
             except ValueError:
                 # print('Error at line: {}'.format(line), end='')
                 pass
+
+    # Read memory
+    workspaces = {}
+    with open(memory_path, 'r') as file:
+        records = json.load(file)['records']
+        for record in records:
+            name = record['name']
+            workspaces[name] = (workspaces[name] if workspaces.get(name) else []) + [record['workspaceUsage']]
 
     # Count operators
     op_counts = {}
@@ -38,13 +82,20 @@ def merge(function_path, timeline_path, pattern_path):
     for name, count in op_counts.items():
         if not name.startswith('.'):
             assert len(times[name]) % count == 0, name
+            assert len(workspaces[name]) % count == 0, name
+            # print(name, count, len(workspaces[name]), len(times[name]))
 
     # Generator oprands
     oprands = []
     sizeof = {'Float32': 4, 'Int64': 8, 'Uint8': 1}
     for oprand in data:
         identity = oprand['id']
-        size = functools.reduce(lambda x, y: x * y, oprand['shape']) * sizeof[oprand['type']] if oprand['shape'] else 0
+        if not oprand['type']:
+            # TODO: fix it
+            size = 0
+        else:
+            size = (functools.reduce(lambda x, y: x * y, oprand['shape']) if oprand['shape'] else 1) * sizeof[
+                oprand['type']]
         assert oprand['arch'] == 'CUDA'
         oprands.append(Oprand(identity, size))
 
@@ -56,8 +107,12 @@ def merge(function_path, timeline_path, pattern_path):
         name = code['name']
         index = (indexing[name] if indexing.get(name) else 0)
         indexing[name] = index + 1
+        if not same(workspaces[name][index::op_counts[name]]):
+            # TODO: fix it
+            # print(code, workspaces[name][index::op_counts[name]])
+            pass
         record = Record(name, code['ins'], code['outs'],
-                        0,  # TODO: add workspace
+                        workspaces[name][index],  # TODO: temporarily choose the first
                         average(times[name][index::op_counts[name]]) if not name.startswith('.') else 0)
         records.append(record)
 
@@ -71,9 +126,10 @@ if __name__ == '__main__':
     for d in os.listdir():
         function_path = os.path.join(d, 'function.json')
         timeline_path = os.path.join(d, 'timeline.txt')
+        memory_path = os.path.join(d, 'memory.json')
         if os.path.isdir(d) and \
                 os.path.exists(function_path) and \
                 os.path.exists(timeline_path):
             print('Merging model {} ... '.format(d), end='')
-            merge(function_path, timeline_path, os.path.join(d, 'pattern.json'))
+            merge(function_path, timeline_path, memory_path, os.path.join(d, 'pattern.json'))
             print('done!')
