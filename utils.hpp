@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdio>
+#include <cstdarg>
+#include <cctype>
 
 std::string pretty(size_t value, size_t scale, const char* *units, int m) {
     int count = 0;
@@ -19,7 +21,7 @@ std::string prettyBytes(size_t size) {
     return pretty(size, 1024, units, 4);
 }
 
-std::string prettyNanosecond(uint64_t duration) {
+std::string prettyNanoseconds(uint64_t duration) {
     char buffer[256];
     sprintf(buffer, "%.6f ms", duration / 1e6);
     return buffer;
@@ -51,6 +53,7 @@ void warning(const char *fmt, ...) {
 }
 
 class Unit {
+    static constexpr size_t unit = 1024;
 public:
     template<typename T>
     static size_t B(T size) {
@@ -59,23 +62,23 @@ public:
 
     template<typename T>
     static size_t KB(T size) {
-        return size * 1024;
+        return size * unit;
     }
 
     template<typename T>
     static size_t MB(T size) {
-        return size * 1024 * 1024;
+        return size * unit * unit;
     }
 
     template<typename T>
     static size_t GB(T size) {
-        return size * 1024 * 1024 * 1024;
+        return size * unit * unit * unit;
     }
 
     static size_t from(const std::string &text) {
         size_t size = 0;
         int index = 0;
-        while (index < text.size() && isnumber(text.at(index))) {
+        while (index < text.size() && isdigit(text.at(index))) {
             size = size * 10 + text.at(index ++) - '0';
         }
         if (index == text.size()) {
