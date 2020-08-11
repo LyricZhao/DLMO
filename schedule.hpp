@@ -59,12 +59,12 @@ typedef std::shared_ptr<Schedule> ScheduleHandle;
 class Schedule {
     bool calculated = false;
     size_t peak_memory = 0;
-    double total_time = 0;
+    uint64_t total_time = 0;
     std::vector<size_t> operands;
     std::vector<TimePoint> schedule;
 
 public:
-    std::pair<size_t, double> statistics() {
+    std::pair<size_t, uint64_t> statistics() {
         if (not calculated) {
             // TODO: calculate
         }
@@ -97,4 +97,30 @@ public:
 
         return schedule;
     }
+
+    void show() const {
+        std::cout << " > Peak memory usage: " << prettyBytes(peak_memory) << std::endl;
+        std::cout << " > Total time: " << prettyNanoseconds(total_time) << std::endl;
+    }
+
+    struct LimitComparator {
+        size_t limit;
+
+        bool operator () (const ScheduleHandle &s, const ScheduleHandle &s2) const {
+            size_t s_peak_memory, s2_peak_memory;
+            uint64_t s_total_time, s2_total_time;
+            std::tie(s_peak_memory, s_total_time) = s->statistics();
+            std::tie(s2_peak_memory, s2_total_time) = s2->statistics();
+            if ((s_peak_memory <= limit) == (s2_peak_memory <= limit)) {
+                return s_total_time <= s2_total_time;
+            }
+            return s_peak_memory <= s2_peak_memory;
+        }
+    };
+
+    struct ConsiderableComparator {
+        bool operator () (const ScheduleHandle &s, const ScheduleHandle &s2) const {
+            return true;
+        }
+    };
 };

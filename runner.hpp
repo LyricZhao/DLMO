@@ -20,9 +20,8 @@ public:
     void run() {
         auto schedule = Schedule::fromFile(path);
         auto optimizer = Optimizer(limit, recompute_on, swap_on);
-        std::cout << "Running case " << path << " with " << optimizer.name() << " ... ";
+        std::cout << "Running case " << path << " with " << optimizer.name() << " ... " << std::endl;
         optimizer.optimize(schedule);
-        std::cout << "done !" << std::endl;
     }
 };
 
