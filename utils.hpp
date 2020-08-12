@@ -81,17 +81,17 @@ public:
 
     template<typename T>
     static constexpr uint64_t us(T time) {
-        return static_cast<uint64_t>(time) * 1000ull;
+        return time * 1000ull;
     }
 
     template<typename T>
     static constexpr uint64_t ms(T time) {
-        return static_cast<uint64_t>(time) * 1000000ull;
+        return time * 1000000ull;
     }
 
     template<typename T>
     static constexpr uint64_t s(T time) {
-        return static_cast<uint64_t>(time) * 1000000000ull;
+        return time * 1000000000ull;
     }
 
     static size_t fromText(const std::string &text) {

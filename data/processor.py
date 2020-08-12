@@ -100,7 +100,7 @@ def merge(function_path, timeline_path, memory_path, pattern_path):
         operands.append(Operand(identity, size))
 
     # Generate code
-    average = lambda l: sum(l[1:]) / (len(l) - 1)
+    average = lambda l: sum(l[2:]) / (len(l) - 2)
     indexing = {}
     records = []
     for code in codes:
