@@ -42,7 +42,12 @@ public:
         ScheduleHandle best = origin;
         auto comparator = Schedule::LimitComparator{limit};
         auto considerable = Schedule::ConsiderableComparator();
+        std::set<size_t> hash_set;
         std::priority_queue<ScheduleHandle, std::vector<ScheduleHandle>, Schedule::LimitComparator> queue(comparator);
+
+        // Source
+        queue.push(origin);
+        hash_set.insert(origin->hash());
 
         // Back-tracing search
         int count = 0;
@@ -63,8 +68,12 @@ public:
 
             // Insert and check
             for (auto &substitution: substitutions) {
+                if (hash_set.count(substitution->hash())) {
+                    continue;
+                }
                 if (considerable(substitution, best)) {
                     queue.push(substitution);
+                    hash_set.insert(substitution->hash());
                 }
                 if (comparator(substitution, best)) {
                     best = substitution;

@@ -36,6 +36,9 @@ struct Task {
     TaskHandle reference;
     std::vector<OprandHandle> ins, outs;
 
+    bool hash_calculated = false;
+    size_t hash_value = 0;
+
     bool allOn(Placement placement, bool isIn) const {
         const auto &vec = isIn ? ins : outs;
         for (auto &operand: vec) {
@@ -46,7 +49,7 @@ struct Task {
         return true;
     }
 
-    size_t inAmount(bool should_on_device=false) {
+    size_t inAmount(bool should_on_device=false) const {
         size_t total = 0;
         for (auto &operand: ins) {
             total += ((not should_on_device) or operand->placement == DEVICE) ? operand->size : 0;
@@ -54,7 +57,7 @@ struct Task {
         return total;
     }
 
-    size_t outAmount(bool should_on_device=false) {
+    size_t outAmount(bool should_on_device=false) const {
         size_t total = 0;
         for (auto &operand: outs) {
             total += ((not should_on_device) or operand->placement == DEVICE) ? operand->size : 0;
@@ -62,20 +65,39 @@ struct Task {
         return total;
     }
 
-    bool isDealloc() {
+    size_t hash() {
+        if (hash_calculated) {
+            return hash_value;
+        }
+        hash_calculated = true;
+        hash_value = std::hash<std::string>()(name);
+        hash_value = hash_value * 131ull + workspace;
+        if (reference) {
+            hash_value = hash_value * 131ull + reference->hash();
+        }
+        for (auto &operand: ins) {
+            hash_value = hash_value * 131ull + reinterpret_cast<size_t>(operand.get());
+        }
+        for (auto &operand: outs) {
+            hash_value = hash_value * 131ull + reinterpret_cast<size_t>(operand.get());
+        }
+        return hash_value;
+    }
+
+    bool isDealloc() const {
         return name == ".dealloc";
     }
 
     // TODO: figure out how to sync a single transfer (just .dealloc?)
-    bool isSync() {
+    bool isSync() const {
         return name == ".sync";
     }
 
-    bool isHost2Device() {
+    bool isHost2Device() const {
         return name == ".host2device";
     }
 
-    bool isDevice2Host() {
+    bool isDevice2Host() const {
         return name == ".device2host";
     }
 
@@ -111,6 +133,9 @@ class Schedule {
     uint64_t total_time = 0;
     std::vector<OprandHandle> operands;
     std::vector<TaskHandle> schedule;
+
+    bool hash_calculated = false;
+    size_t hash_value = 0;
 
 public:
     std::pair<size_t, uint64_t> statistics() {
@@ -160,7 +185,7 @@ public:
                 size_t execution_memory = 0;
                 if (task->isSync()) {
                     // TODO: specify operands to be synced
-                    assert(task->ins.size() == 0 && task->outs.size() == 0);
+                    assert(task->ins.empty() && task->outs.empty());
                     assert(task->reference->isHost2Device() or task->reference->isDevice2Host());
                     Placement placement = task->reference->isHost2Device() ? DEVICE : HOST;
                     Placement origin = placement == DEVICE ? HOST : DEVICE;
@@ -181,7 +206,7 @@ public:
                         assert(task->allOn(HOST, false));
                     }
                 } else if (task->isDealloc()) {
-                    assert(task->ins.size() == 0);
+                    assert(task->ins.empty());
                     current_memory -= task->outAmount(true);
                 } else {
                     assert(task->allOn(DEVICE, true));
@@ -232,6 +257,18 @@ public:
         std::cout << " > Total time: " << prettyNanoseconds(total_time) << std::endl;
     }
 
+    size_t hash() {
+        if (hash_calculated) {
+            return hash_value;
+        }
+
+        hash_value = 0;
+        for (auto &task: schedule) {
+            hash_value = hash_value * 131ull + task->hash();
+        }
+        return hash_value;
+    }
+
     struct LimitComparator {
         size_t limit;
 
@@ -248,6 +285,7 @@ public:
     };
 
     struct ConsiderableComparator {
+        // TODO: finish coding
         bool operator () (const ScheduleHandle &s, const ScheduleHandle &s2) const {
             return true;
         }
