@@ -40,10 +40,9 @@ public:
 
     void optimize(const ScheduleHandle &origin) const {
         ScheduleHandle best = origin;
-        auto comparator = Schedule::LimitComparator{limit};
-        auto considerable = Schedule::ConsiderableComparator();
+        auto comparator = Schedule::Comparator{origin->statistics().second, limit};
         std::set<size_t> hash_set;
-        std::priority_queue<ScheduleHandle, std::vector<ScheduleHandle>, Schedule::LimitComparator> queue(comparator);
+        std::priority_queue<ScheduleHandle, std::vector<ScheduleHandle>, Schedule::Comparator> queue(comparator);
 
         // Source
         queue.push(origin);
@@ -71,7 +70,7 @@ public:
                 if (hash_set.count(substitution->hash())) {
                     continue;
                 }
-                if (considerable(substitution, best)) {
+                if (comparator.considerable(substitution, best)) {
                     queue.push(substitution);
                     hash_set.insert(substitution->hash());
                 }

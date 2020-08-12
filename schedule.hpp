@@ -261,7 +261,7 @@ public:
         if (hash_calculated) {
             return hash_value;
         }
-
+        hash_calculated = true;
         hash_value = 0;
         for (auto &task: schedule) {
             hash_value = hash_value * 131ull + task->hash();
@@ -269,25 +269,38 @@ public:
         return hash_value;
     }
 
-    struct LimitComparator {
+    struct Comparator {
+        uint64_t origin_time;
         size_t limit;
 
-        bool operator () (const ScheduleHandle &s, const ScheduleHandle &s2) const {
-            size_t s_peak_memory, s2_peak_memory;
-            uint64_t s_total_time, s2_total_time;
-            std::tie(s_peak_memory, s_total_time) = s->statistics();
-            std::tie(s2_peak_memory, s2_total_time) = s2->statistics();
-            if ((s_peak_memory <= limit) == (s2_peak_memory <= limit)) {
-                return s_total_time <= s2_total_time;
-            }
-            return s_peak_memory <= s2_peak_memory;
-        }
-    };
+        static constexpr double MEMORY_FACTOR = 0.5;
+        static constexpr double TIME_FACTOR = 1 - MEMORY_FACTOR;
+        static constexpr double RECONSIDER_RATIO = 1.05;
 
-    struct ConsiderableComparator {
-        // TODO: finish coding
-        bool operator () (const ScheduleHandle &s, const ScheduleHandle &s2) const {
-            return true;
+        double score(const ScheduleHandle &s) const {
+            size_t memory;
+            uint64_t time;
+            std::tie(memory, time) = s->statistics();
+
+            // Using exceeded ratio to compare, lower is better
+            double exceeded_memory_ratio = memory > limit ? (static_cast<double>(memory - limit) / limit) : 0;
+            double exceeded_time_ratio = static_cast<double>(time - origin_time) / origin_time;
+            return MEMORY_FACTOR * exceeded_memory_ratio + TIME_FACTOR * exceeded_time_ratio;
+        }
+
+        bool operator () (const ScheduleHandle &s1, const ScheduleHandle &s2) const {
+            // Whether reaching limit
+            if ((s1->statistics().first <= limit) != (s2->statistics().first <= limit)) {
+                return s2->statistics().first <= limit;
+            }
+
+            // Compare both time and memory
+            return score(s1) > score(s2);
+        }
+
+        bool considerable(const ScheduleHandle &s1, const ScheduleHandle &s2) const {
+            // Return whether `s1` is considerable comparing to `s2` (possibly the best)
+            return score(s1) < score(s2) * RECONSIDER_RATIO;
         }
     };
 };
