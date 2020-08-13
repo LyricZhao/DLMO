@@ -14,9 +14,9 @@ int main(int argc, char **argv) {
     // Run cases
     std::ifstream config(argv[1]);
     std::string path, limit;
-    bool recompute_on, swap_on;
-    while (config >> path >> limit >> recompute_on >> swap_on) {
-        auto runner = Runner(path, Unit::fromText(limit), recompute_on, swap_on);
+    bool use_recompute, use_swap;
+    while (config >> path >> limit >> use_recompute >> use_swap) {
+        auto runner = Runner(path, Unit::fromText(limit), use_recompute, use_swap);
         runner.run();
     }
 

@@ -12,7 +12,7 @@ int main() {
     };
 
     for (size_t size: {Unit::B(4), Unit::KiB(1), Unit::MiB(1), Unit::GiB(1), Unit::GiB(2), Unit::GiB(4)}) {
-        std::cout << "Running test with " << prettyBytes(size) << " ... " << std::endl;
+        printf("Running test with %s ... \n", prettyBytes(size).c_str());
 
         // Init
         void *host_ptr, *device_ptr;
@@ -32,10 +32,8 @@ int main() {
         // Finish
         cudaFreeHost(host_ptr);
         cudaFree(device_ptr);
-        std::cout << " > Host to device: " << prettyNanoseconds(host2device_duration)
-            << " (" << bandwidth(size, host2device_duration) << " GiB/s)" << std::endl;
-        std::cout << " > Device to host: " << prettyNanoseconds(device2host_duration)
-            << " (" << bandwidth(size, device2host_duration) << " GiB/s)" << std::endl;
+        printf(" > Host to device: %s (%.3lf GiB/s)\n", prettyNanoseconds(host2device_duration).c_str(), bandwidth(size, host2device_duration));
+        printf(" > Device to host: %s (%.3lf GiB/s)\n", prettyNanoseconds(device2host_duration).c_str(), bandwidth(size, device2host_duration));
     }
     return 0;
 }

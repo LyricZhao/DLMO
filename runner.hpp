@@ -11,18 +11,16 @@
 class Runner {
     std::string path;
     size_t limit;
-    bool recompute_on, swap_on;
+    bool use_recompute, use_swap;
 
 public:
-    explicit Runner(std::string path, size_t limit, bool recompute_on, bool swap_on):
-        path(std::move(path)), limit(limit), recompute_on(recompute_on), swap_on(swap_on) {}
+    explicit Runner(std::string path, size_t limit, bool use_recompute, bool use_swap):
+        path(std::move(path)), limit(limit), use_recompute(use_recompute), use_swap(use_swap) {}
 
     void run() {
         auto schedule = Schedule::fromFile(path);
-        auto optimizer = Optimizer(limit, recompute_on, swap_on);
-        std::cout << "Running case " << path << " with " << optimizer.name() << " ... " << std::endl;
+        auto optimizer = Optimizer(limit, use_recompute, use_swap);
+        printf("Running case %s with %s ... \n", path.c_str(), optimizer.name().c_str());
         optimizer.optimize(schedule);
     }
 };
-
-typedef std::shared_ptr<Runner> RunnerHandle;

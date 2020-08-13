@@ -3,6 +3,7 @@
 #include <cassert>
 #include <memory>
 #include <set>
+#include <sstream>
 
 #include "json.hpp"
 #include "utils.hpp"
@@ -49,7 +50,7 @@ struct Task {
         return true;
     }
 
-    size_t inAmount(bool should_on_device=false) const {
+    size_t insAmount(bool should_on_device=false) const {
         size_t total = 0;
         for (auto &operand: ins) {
             total += ((not should_on_device) or operand->placement == DEVICE) ? operand->size : 0;
@@ -57,7 +58,7 @@ struct Task {
         return total;
     }
 
-    size_t outAmount(bool should_on_device=false) const {
+    size_t outsAmount(bool should_on_device=false) const {
         size_t total = 0;
         for (auto &operand: outs) {
             total += ((not should_on_device) or operand->placement == DEVICE) ? operand->size : 0;
@@ -150,14 +151,14 @@ public:
                 if (task->isSync()) {
                     // NOTE: `finish` and `total_time` are unsigned
                     if (task->reference->finish > total_time) {
-                        duration = std::max(duration, task->reference->finish - total_time);
+                        duration = task->reference->finish - total_time;
                     }
                 } else if (task->isDevice2Host() or task->isHost2Device()) {
                     uint64_t start_time = std::max(total_time, next_available_transfer_time);
-                    task->finish = start_time + task->inAmount() / PCIE_GBPNS + PCIE_LATENCY;
+                    task->finish = start_time + task->insAmount() / PCIE_GBPNS + PCIE_LATENCY;
                     next_available_transfer_time = task->finish;
                 } else {
-                    duration += task->time;
+                    duration = task->time;
                 }
                 total_time += duration;
             }
@@ -182,32 +183,36 @@ public:
             }
             peak_memory = current_memory;
             for (auto &task: schedule) {
-                size_t execution_memory = 0;
                 if (task->isSync()) {
                     // TODO: specify operands to be synced
                     assert(task->ins.empty() && task->outs.empty());
                     assert(task->reference->isHost2Device() or task->reference->isDevice2Host());
-                    Placement placement = task->reference->isHost2Device() ? DEVICE : HOST;
-                    Placement origin = placement == DEVICE ? HOST : DEVICE;
+                    Placement dest = task->reference->isHost2Device() ? DEVICE : HOST;
                     // NOTE: there's no implicit .dealloc
                     for (auto &operand: task->reference->outs) {
-                        assert(operand->placement == origin);
-                        operand->placement = placement;
+                        assert(operand->placement == ABSTRACT);
+                        operand->placement = dest;
                     }
                 } else if (task->isHost2Device() or task->isDevice2Host()) {
                     // NOTE: not generate operand placement until .sync but the space is pre-allocated
-                    assert(task->inAmount() == task->outAmount());
-                    if (task->isHost2Device()) {
-                        assert(task->allOn(HOST, true));
-                        assert(task->allOn(DEVICE, false));
-                        current_memory += task->outAmount();
-                    } else {
-                        assert(task->allOn(DEVICE, true));
-                        assert(task->allOn(HOST, false));
+                    // NOTE: they're not movement but copying
+                    assert(task->insAmount() == task->outsAmount());
+                    Placement source = task->isHost2Device() ? HOST : DEVICE;
+                    Placement dest = source == HOST ? DEVICE : HOST;
+                    assert(task->allOn(source, true));
+                    for (auto &operand: task->outs) {
+                        assert(operand->placement != source);
+                        if (operand->placement == ABSTRACT) {
+                            current_memory += dest == DEVICE ? operand->size : 0;
+                        }
+                        operand->placement = ABSTRACT;
                     }
                 } else if (task->isDealloc()) {
                     assert(task->ins.empty());
-                    current_memory -= task->outAmount(true);
+                    for (auto &operand: task->outs) {
+                        operand->placement = ABSTRACT;
+                    }
+                    current_memory -= task->outsAmount(true);
                 } else {
                     assert(task->allOn(DEVICE, true));
                     for (auto &operand: task->outs) {
@@ -217,9 +222,9 @@ public:
                             current_memory += operand->size;
                         }
                     }
-                    execution_memory = current_memory + task->workspace;
                 }
-                peak_memory = std::max(peak_memory, std::max(execution_memory, current_memory));
+                size_t execution_memory = current_memory + task->workspace;
+                peak_memory = std::max(peak_memory, execution_memory);
             }
         }
         return std::make_pair(peak_memory, total_time);
@@ -251,10 +256,12 @@ public:
         return schedule;
     }
 
-    void show() {
+    std::string info() {
         statistics();
-        std::cout << " > Peak memory usage: " << prettyBytes(peak_memory) << std::endl;
-        std::cout << " > Total time: " << prettyNanoseconds(total_time) << std::endl;
+        std::stringstream ss;
+        ss << "peak memory: " << prettyBytes(peak_memory) << ", ";
+        ss << "total time: " << prettyNanoseconds(total_time);
+        return ss.str();
     }
 
     size_t hash() {
@@ -276,6 +283,7 @@ public:
         static constexpr double MEMORY_FACTOR = 0.5;
         static constexpr double TIME_FACTOR = 1 - MEMORY_FACTOR;
         static constexpr double RECONSIDER_RATIO = 1.05;
+        static constexpr double TIME_REQUIREMENT_RATIO = 1.01;
 
         double score(const ScheduleHandle &s) const {
             size_t memory;
@@ -296,6 +304,13 @@ public:
 
             // Compare both time and memory
             return score(s1) > score(s2);
+        }
+
+        bool satisfy(const ScheduleHandle &s) const {
+            size_t memory;
+            uint64_t time;
+            std::tie(memory, time) = s->statistics();
+            return memory <= limit && time <= TIME_REQUIREMENT_RATIO * origin_time;
         }
 
         bool considerable(const ScheduleHandle &s1, const ScheduleHandle &s2) const {
