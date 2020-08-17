@@ -11,15 +11,13 @@
 class Runner {
     std::string path;
     size_t limit;
-    bool use_recompute, use_swap;
 
 public:
-    explicit Runner(std::string path, size_t limit, bool use_recompute, bool use_swap):
-        path(std::move(path)), limit(limit), use_recompute(use_recompute), use_swap(use_swap) {}
+    Runner(std::string path, size_t limit): path(std::move(path)), limit(limit) {}
 
     void run() {
         auto schedule = Schedule::fromFile(path);
-        auto optimizer = Optimizer(limit, use_recompute, use_swap);
+        auto optimizer = Optimizer(limit);
         printf("Running case %s with %s ... \n", path.c_str(), optimizer.name().c_str());
         optimizer.optimize(schedule);
     }

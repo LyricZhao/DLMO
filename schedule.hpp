@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <list>
+#include <map>
 #include <memory>
 #include <set>
 #include <sstream>
@@ -13,22 +14,32 @@
 struct Operand;
 typedef std::shared_ptr<Operand> OprandHandle;
 
+struct Task;
+typedef std::shared_ptr<Task> TaskHandle;
+typedef std::list<TaskHandle>::const_iterator TaskPos;
+
 struct Operand {
     // Can be shared by other schedules
     size_t size;
 
     // For temporary use
     bool exist = false;
+    bool has_generated = false;
+    TaskPos generate;
 
     explicit Operand(size_t size): size(size) {}
 };
 
-struct Task;
-typedef std::shared_ptr<Task> TaskHandle;
-typedef std::list<TaskHandle>::iterator TaskPos;
-
 struct Occupy {
     TaskPos generate, use;
+
+    bool operator < (const Occupy &another) const {
+        auto g = reinterpret_cast<size_t>(generate->get());
+        auto u = reinterpret_cast<size_t>(use->get());
+        auto a_g = reinterpret_cast<size_t>(another.generate->get());
+        auto a_u = reinterpret_cast<size_t>(another.use->get());
+        return g == a_g ? u < a_u : g < a_g;
+    }
 };
 
 struct Task {
@@ -38,10 +49,10 @@ struct Task {
     std::vector<OprandHandle> ins, outs;
     bool hash_calculated = false;
     size_t hash_value = 0;
+    uint64_t time;
 
     // For temporary use
-    uint64_t time = 0, finish = 0;
-    std::vector<Occupy> occupies;
+    size_t usage_during_execution;
 
     bool allExist(bool isIn) const {
         const auto &vec = isIn ? ins : outs;
@@ -137,11 +148,51 @@ public:
         return copy;
     }
 
-    std::pair<size_t, uint64_t> statistics() {
-        if (not calculated) {
+    std::set<Occupy> analyze_essential(size_t limit) {
+        // TODO: estimate minimal usage
+        std::set<Occupy> essential;
+        statistics(true);
+        for (const auto &operand: operands) {
+            operand->has_generated = false;
+        }
+
+        for (auto iterator = schedule.begin(); iterator != schedule.end(); ++ iterator) {
+            auto &task = *iterator;
+            if (task->isDealloc()) {
+                continue;
+            }
+            for (const auto &operand: task->ins) {
+                if (operand->has_generated) {
+                    auto generate_point = operand->generate;
+                    auto occupy = Occupy {generate_point, iterator};
+                    if (essential.count(occupy)) {
+                        continue;
+                    }
+                    for (auto occupied = ++ generate_point; occupied != iterator; ++ occupied) {
+                        auto &occupied_task = *occupied;
+                        if (occupied_task->isDealloc() or occupied_task->usage_during_execution <= limit) {
+                            continue;
+                        }
+                        essential.insert(occupy);
+                        // printf("[%s, %s] occupies [%s, %s].\n", occupy.generate->get()->name.c_str(),
+                        //        occupy.use->get()->name.c_str(), occupied_task->name.c_str(),
+                        //        prettyBytes(occupied_task->usage_during_execution).c_str());
+                        break;
+                    }
+                }
+            }
+            for (const auto &operand: task->outs) {
+                operand->has_generated = true;
+                operand->generate = iterator;
+            }
+        }
+        return essential;
+    }
+
+    std::pair<size_t, uint64_t> statistics(bool force=false) {
+        if (not calculated or force) {
             calculated = true;
             total_time = 0;
-            uint64_t next_available_transfer_time = 0;
 
             // Simulation for time
             for (auto &task: schedule) {
@@ -181,13 +232,12 @@ public:
                     for (auto &operand: task->outs) {
                         if (not operand->exist) {
                             operand->exist = true;
-                            if (not share) {
-                                current_memory += operand->size;
-                            }
+                            current_memory += share ? 0 : operand->size;
                         }
                     }
                 }
                 size_t execution_memory = current_memory + task->workspace;
+                task->usage_during_execution = execution_memory;
                 peak_memory = std::max(peak_memory, execution_memory);
             }
         }

@@ -95,20 +95,18 @@ public:
     }
 
     static size_t fromText(const std::string &text) {
-        size_t size = 0;
-        int index = 0;
-        while (index < text.size() && isdigit(text.at(index))) {
-            size = size * 10 + text.at(index ++) - '0';
-        }
-        if (index == text.size()) {
+        const char *ptr = text.c_str();
+        char *unit_ptr;
+        double size = strtod(ptr, &unit_ptr);
+        if (unit_ptr - ptr == text.size()) {
            error("No unit specified");
-        } else if (text.at(index) == 'B') {
+        } else if (*unit_ptr == 'B') {
             return B(size);
-        } else if (text.at(index) == 'K') {
+        } else if (*unit_ptr == 'K') {
             return KiB(size);
-        } else if (text.at(index) == 'M') {
+        } else if (*unit_ptr == 'M') {
             return MiB(size);
-        } else if (text.at(index) == 'G') {
+        } else if (*unit_ptr == 'G') {
             return GiB(size);
         }
         error("Failed to parse size (format: {num}{B/KiB/MiB/GiB}, e.g. 8GiB)");

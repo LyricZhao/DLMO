@@ -12,32 +12,18 @@ class Optimizer {
     static constexpr int SEARCH_LIMIT = 1000;
 
     size_t limit;
-    bool use_recompute, use_swap;
 
 public:
-    Optimizer(size_t limit, bool use_recompute, bool use_swap) {
+    explicit Optimizer(size_t limit) {
         this->limit = limit;
-        this->use_recompute = use_recompute;
-        this->use_swap = use_swap;
     }
 
     std::string name() const {
-        std::stringstream ss;
-        ss << "optimizer (limit ";
-        ss << prettyBytes(limit) << ", ";
-        ss << "recompute " << (use_recompute ? "on" : "off") << ", ";
-        ss << "swap " << (use_swap ? "on" : "off") << ")";
-        return ss.str();
+        return "optimizer (limit " + prettyBytes(limit) + ")";
     }
 
     // TODO: finish coding
-    static std::vector<ScheduleHandle> generateRecomputeSubstitution(const ScheduleHandle &schedule) {
-        std::vector<ScheduleHandle> substitutions;
-        return substitutions;
-    };
-
-    // TODO: finish coding
-    static std::vector<ScheduleHandle> generateSwapSubstitution(const ScheduleHandle &schedule) {
+    static std::vector<ScheduleHandle> generateSubstitutions(const ScheduleHandle &schedule) {
         std::vector<ScheduleHandle> substitutions;
         return substitutions;
     };
@@ -62,15 +48,7 @@ public:
             ++ count;
 
             // Substitute
-            std::vector<ScheduleHandle> substitutions;
-            if (use_recompute) {
-                auto vec = generateRecomputeSubstitution(top);
-                substitutions.insert(substitutions.begin(), vec.begin(), vec.end());
-            }
-            if (use_swap) {
-                auto vec = generateSwapSubstitution(top);
-                substitutions.insert(substitutions.begin(), vec.begin(), vec.end());
-            }
+            std::vector<ScheduleHandle> substitutions = generateSubstitutions(top);
 
             // Insert and check
             for (auto &substitution: substitutions) {
@@ -100,11 +78,13 @@ public:
                 break;
             }
         }
+        best->analyze_essential(limit);
 
         // Show best
         printf(" > Result:\n");
         printf("   > Schedules searched: %d\n", count);
         printf("   > Time used: %s\n", prettyNanoseconds(timer.tik()).c_str());
         printf("   > Best: {%s}\n", best->info().c_str());
+        printf("   > Satisfy: %s\n", comparator.satisfy(best) ? "true" : "false");
     }
 };
