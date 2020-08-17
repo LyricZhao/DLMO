@@ -10,16 +10,6 @@
 #include "json.hpp"
 #include "utils.hpp"
 
-static constexpr size_t PCIE_GBPS = Unit::GiB(12);
-static constexpr size_t PCIE_GBPNS = PCIE_GBPS / 1000000000ull;
-static constexpr uint64_t PCIE_LATENCY = Unit::ms(0.02);
-
-enum Placement {
-    ABSTRACT,
-    DEVICE,
-    HOST
-};
-
 struct Operand;
 typedef std::shared_ptr<Operand> OprandHandle;
 
@@ -28,7 +18,7 @@ struct Operand {
     size_t size;
 
     // For temporary use
-    Placement placement = ABSTRACT;
+    bool exist = false;
 
     explicit Operand(size_t size): size(size) {}
 };
@@ -45,7 +35,6 @@ struct Task {
     // Can be shared by other schedules
     std::string name = "none";
     size_t workspace = 0;
-    TaskHandle reference;
     std::vector<OprandHandle> ins, outs;
     bool hash_calculated = false;
     size_t hash_value = 0;
@@ -54,28 +43,20 @@ struct Task {
     uint64_t time = 0, finish = 0;
     std::vector<Occupy> occupies;
 
-    bool allOn(Placement placement, bool isIn) const {
+    bool allExist(bool isIn) const {
         const auto &vec = isIn ? ins : outs;
         for (auto &operand: vec) {
-            if (operand->placement != placement) {
+            if (not operand->exist) {
                 return false;
             }
         }
         return true;
     }
 
-    size_t insAmount(bool should_on_device=false) const {
-        size_t total = 0;
-        for (auto &operand: ins) {
-            total += ((not should_on_device) or operand->placement == DEVICE) ? operand->size : 0;
-        }
-        return total;
-    }
-
-    size_t outsAmount(bool should_on_device=false) const {
+    size_t outsAmount() const {
         size_t total = 0;
         for (auto &operand: outs) {
-            total += ((not should_on_device) or operand->placement == DEVICE) ? operand->size : 0;
+            total += operand->size;
         }
         return total;
     }
@@ -87,9 +68,6 @@ struct Task {
         hash_calculated = true;
         hash_value = std::hash<std::string>()(name);
         hash_value = hash_value * 131ull + workspace;
-        if (reference) {
-            hash_value = hash_value * 131ull + reference->hash();
-        }
         for (auto &operand: ins) {
             hash_value = hash_value * 131ull + reinterpret_cast<size_t>(operand.get());
         }
@@ -103,23 +81,19 @@ struct Task {
         return name == ".dealloc";
     }
 
-    // TODO: figure out how to sync a single transfer (just .dealloc?)
-    bool isSync() const {
-        return name == ".sync";
+    bool isShare() const {
+        return name == ".share";
     }
 
-    bool isHost2Device() const {
-        return name == ".host2device";
-    }
-
-    bool isDevice2Host() const {
-        return name == ".device2host";
+    bool isForbidden() const {
+        return name == ".host2device" or name == ".device2host" or name == ".sync" or name == ".alloc";
     }
 
     static TaskHandle fromJson(const std::vector<OprandHandle> &operands, const nlohmann::json &json) {
         auto task = std::make_shared<Task>();
         auto fill = [operands](std::vector<OprandHandle> &vec, const nlohmann::json &array) {
             vec.resize(array.size());
+            // Python processor has already assumed `arch == "CUDA"`
             for (int i = 0; i < vec.size(); ++ i) {
                 vec[i] = operands[static_cast<int>(array[i])];
             }
@@ -133,8 +107,7 @@ struct Task {
         task->time = Unit::us(static_cast<double>(json[4]));
 
         // TODO: JSON file has .host2device-like operators
-        assert(task->name != ".host2device");
-        assert(task->name != ".device2host");
+        assert(not task->isForbidden());
         return task;
     }
 };
@@ -172,32 +145,19 @@ public:
 
             // Simulation for time
             for (auto &task: schedule) {
-                uint64_t duration = 0;
-                if (task->isSync()) {
-                    // NOTE: `finish` and `total_time` are unsigned
-                    if (task->reference->finish > total_time) {
-                        duration = task->reference->finish - total_time;
-                    }
-                } else if (task->isDevice2Host() or task->isHost2Device()) {
-                    uint64_t start_time = std::max(total_time, next_available_transfer_time);
-                    task->finish = start_time + task->insAmount() / PCIE_GBPNS + PCIE_LATENCY;
-                    next_available_transfer_time = task->finish;
-                } else {
-                    duration = task->time;
-                }
-                total_time += duration;
+                total_time += task->time;
             }
 
             // Simulation for memory
             size_t current_memory = 0;
             for (auto &operand: operands) {
-                operand->placement = ABSTRACT;
+                operand->exist = false;
             }
             std::set<OprandHandle> exists;
             for (auto &task: schedule) {
                 for (auto &operand: task->ins) {
                     if (not exists.count(operand)) {
-                        operand->placement = DEVICE;
+                        operand->exist = true;
                         exists.insert(operand);
                         current_memory += operand->size;
                     }
@@ -208,43 +168,22 @@ public:
             }
             peak_memory = current_memory;
             for (auto &task: schedule) {
-                if (task->isSync()) {
-                    // TODO: specify operands to be synced
-                    assert(task->ins.empty() && task->outs.empty());
-                    assert(task->reference->isHost2Device() or task->reference->isDevice2Host());
-                    Placement dest = task->reference->isHost2Device() ? DEVICE : HOST;
-                    // NOTE: there's no implicit .dealloc
-                    for (auto &operand: task->reference->outs) {
-                        assert(operand->placement == ABSTRACT);
-                        operand->placement = dest;
-                    }
-                } else if (task->isHost2Device() or task->isDevice2Host()) {
-                    // NOTE: not generate operand placement until .sync but the space is pre-allocated
-                    // NOTE: they're not movement but copying
-                    assert(task->insAmount() == task->outsAmount());
-                    Placement source = task->isHost2Device() ? HOST : DEVICE;
-                    Placement dest = source == HOST ? DEVICE : HOST;
-                    assert(task->allOn(source, true));
-                    for (auto &operand: task->outs) {
-                        assert(operand->placement != source);
-                        if (operand->placement == ABSTRACT) {
-                            current_memory += dest == DEVICE ? operand->size : 0;
-                        }
-                        operand->placement = ABSTRACT;
-                    }
-                } else if (task->isDealloc()) {
+                if (task->isDealloc()) {
                     assert(task->ins.empty());
+                    assert(task->allExist(false));
                     for (auto &operand: task->outs) {
-                        operand->placement = ABSTRACT;
+                        operand->exist = false;
                     }
-                    current_memory -= task->outsAmount(true);
+                    current_memory -= task->outsAmount();
                 } else {
-                    assert(task->allOn(DEVICE, true));
+                    assert(task->allExist(true));
+                    bool share = task->isShare();
                     for (auto &operand: task->outs) {
-                        assert(operand->placement != HOST);
-                        if (operand->placement == ABSTRACT) {
-                            operand->placement = DEVICE;
-                            current_memory += operand->size;
+                        if (not operand->exist) {
+                            operand->exist = true;
+                            if (not share) {
+                                current_memory += operand->size;
+                            }
                         }
                     }
                 }
