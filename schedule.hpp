@@ -1,9 +1,11 @@
 #pragma once
 
 #include <cassert>
+#include <list>
 #include <memory>
 #include <set>
 #include <sstream>
+#include <vector>
 
 #include "json.hpp"
 #include "utils.hpp"
@@ -18,27 +20,39 @@ enum Placement {
     HOST
 };
 
+struct Operand;
+typedef std::shared_ptr<Operand> OprandHandle;
+
 struct Operand {
+    // Can be shared by other schedules
     size_t size;
+
+    // For temporary use
     Placement placement = ABSTRACT;
 
     explicit Operand(size_t size): size(size) {}
 };
 
-typedef std::shared_ptr<Operand> OprandHandle;
-
 struct Task;
 typedef std::shared_ptr<Task> TaskHandle;
+typedef std::list<TaskHandle>::iterator TaskPos;
+
+struct Occupy {
+    TaskPos generate, use;
+};
 
 struct Task {
+    // Can be shared by other schedules
     std::string name = "none";
-    uint64_t time = 0, finish = 0;
     size_t workspace = 0;
     TaskHandle reference;
     std::vector<OprandHandle> ins, outs;
-
     bool hash_calculated = false;
     size_t hash_value = 0;
+
+    // For temporary use
+    uint64_t time = 0, finish = 0;
+    std::vector<Occupy> occupies;
 
     bool allOn(Placement placement, bool isIn) const {
         const auto &vec = isIn ? ins : outs;
@@ -129,16 +143,27 @@ class Schedule;
 typedef std::shared_ptr<Schedule> ScheduleHandle;
 
 class Schedule {
+    // Structure
+    std::vector<OprandHandle> operands;
+    std::list<TaskHandle> schedule;
+
+    // Statistics
     bool calculated = false;
     size_t peak_memory = 0;
     uint64_t total_time = 0;
-    std::vector<OprandHandle> operands;
-    std::vector<TaskHandle> schedule;
 
+    // Hash
     bool hash_calculated = false;
     size_t hash_value = 0;
 
 public:
+    ScheduleHandle copy() const {
+        ScheduleHandle copy = std::make_shared<Schedule>();
+        copy->operands = operands;
+        copy->schedule = schedule;
+        return copy;
+    }
+
     std::pair<size_t, uint64_t> statistics() {
         if (not calculated) {
             calculated = true;
