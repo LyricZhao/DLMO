@@ -23,9 +23,11 @@ public:
     }
 
     // TODO: finish coding
-    static std::vector<ScheduleHandle> generateSubstitutions(const ScheduleHandle &schedule) {
-        std::vector<ScheduleHandle> substitutions;
-        return substitutions;
+    std::vector<ScheduleHandle> generateSubstitutions(const ScheduleHandle &schedule) const {
+        auto new_schedule = schedule->copy();
+        auto best = new_schedule->analyze_essential(limit);
+        new_schedule->apply(best);
+        return {new_schedule};
     };
 
     void optimize(const ScheduleHandle &origin) const {
@@ -78,7 +80,6 @@ public:
                 break;
             }
         }
-        best->analyze_essential(limit);
 
         // Show best
         printf(" > Result:\n");

@@ -12,11 +12,17 @@
 #include "utils.hpp"
 
 struct Operand;
-typedef std::shared_ptr<Operand> OprandHandle;
+typedef std::shared_ptr<Operand> OperandHandle;
 
 struct Task;
 typedef std::shared_ptr<Task> TaskHandle;
 typedef std::list<TaskHandle>::const_iterator TaskPos;
+
+struct Occupy;
+typedef std::shared_ptr<Occupy> OccupyHandle;
+
+class Schedule;
+typedef std::shared_ptr<Schedule> ScheduleHandle;
 
 struct Operand {
     // Can be shared by other schedules
@@ -32,6 +38,28 @@ struct Operand {
 
 struct Occupy {
     TaskPos generate, use;
+    // TODO: the operands to dealloc are more than one
+    OperandHandle to_dealloc;
+    double msps;
+
+    static OccupyHandle create(const TaskPos &generate, const TaskPos &use, const OperandHandle &to_dealloc,
+            uint64_t time, size_t peak, size_t saved, size_t limit) {
+        auto occupy = std::make_shared<Occupy>();
+        occupy->generate = generate;
+        occupy->use = use;
+        occupy->to_dealloc = to_dealloc;
+        occupy->setMSPS(time, peak, saved, limit);
+        return occupy;
+    }
+
+    void setMSPS(uint64_t time, size_t peak, size_t saved, size_t limit) {
+        if (time == 0) {
+            msps = 1e9;
+        } else {
+            saved = (peak - saved < limit) ? (peak - limit) : saved;
+            msps = static_cast<double>(saved) / time;
+        }
+    }
 
     bool operator < (const Occupy &another) const {
         auto g = reinterpret_cast<size_t>(generate->get());
@@ -46,13 +74,34 @@ struct Task {
     // Can be shared by other schedules
     std::string name = "none";
     size_t workspace = 0;
-    std::vector<OprandHandle> ins, outs;
+    std::vector<OperandHandle> ins, outs;
     bool hash_calculated = false;
     size_t hash_value = 0;
-    uint64_t time;
+    uint64_t time = 0;
 
     // For temporary use
+    int time_point;
     size_t usage_during_execution;
+    std::vector<OccupyHandle> queries;
+
+    static TaskHandle dealloc(const std::vector<OperandHandle> &operands) {
+        auto task = std::make_shared<Task>();
+        task->name = ".dealloc";
+        task->outs = operands;
+        return task;
+    }
+
+    TaskHandle copy() const {
+        auto task = std::make_shared<Task>();
+        task->name = name;
+        task->workspace = workspace;
+        task->ins = ins;
+        task->outs = outs;
+        task->hash_calculated = hash_calculated;
+        task->hash_value = hash_value;
+        task->time = time;
+        return task;
+    }
 
     bool allExist(bool isIn) const {
         const auto &vec = isIn ? ins : outs;
@@ -100,9 +149,9 @@ struct Task {
         return name == ".host2device" or name == ".device2host" or name == ".sync" or name == ".alloc";
     }
 
-    static TaskHandle fromJson(const std::vector<OprandHandle> &operands, const nlohmann::json &json) {
+    static TaskHandle fromJson(const std::vector<OperandHandle> &operands, const nlohmann::json &json) {
         auto task = std::make_shared<Task>();
-        auto fill = [operands](std::vector<OprandHandle> &vec, const nlohmann::json &array) {
+        auto fill = [operands](std::vector<OperandHandle> &vec, const nlohmann::json &array) {
             vec.resize(array.size());
             // Python processor has already assumed `arch == "CUDA"`
             for (int i = 0; i < vec.size(); ++ i) {
@@ -123,12 +172,9 @@ struct Task {
     }
 };
 
-class Schedule;
-typedef std::shared_ptr<Schedule> ScheduleHandle;
-
 class Schedule {
     // Structure
-    std::vector<OprandHandle> operands;
+    std::vector<OperandHandle> operands;
     std::list<TaskHandle> schedule;
 
     // Statistics
@@ -148,13 +194,44 @@ public:
         return copy;
     }
 
-    std::set<Occupy> analyze_essential(size_t limit) {
+    void apply(const OccupyHandle &occupy) {
+        auto iterator = occupy->use;
+        for (-- iterator; iterator != occupy->generate; -- iterator) {
+            bool stop = false;
+            for (auto &operand: (*iterator)->ins) {
+                if (operand == occupy->to_dealloc) {
+                    stop = true;
+                    break;
+                }
+            }
+            if (stop) {
+                break;
+            }
+        }
+        schedule.insert(++ iterator, Task::dealloc({occupy->to_dealloc}));
+        printf("To dealloc: %p\n", occupy->to_dealloc.get());
+        printf("Regenerate: [%s (%p), %s]\n", (*occupy->generate)->name.c_str(), (*occupy->generate).get(),
+                (*occupy->use)->name.c_str());
+        schedule.insert(occupy->use, (*occupy->generate)->copy());
+    }
+
+    OccupyHandle analyze_essential(size_t limit) {
         // TODO: estimate minimal usage
-        std::set<Occupy> essential;
+        std::vector<OccupyHandle> essential;
         statistics(true);
         for (const auto &operand: operands) {
             operand->has_generated = false;
         }
+        int count = 0;
+        int peak_time_point = -1;
+        for (const auto &task: schedule) {
+            task->time_point = ++ count;
+            if (task->usage_during_execution == peak_memory) {
+                peak_time_point = count;
+            }
+            task->queries.clear();
+        }
+        assert(peak_time_point != -1);
 
         for (auto iterator = schedule.begin(); iterator != schedule.end(); ++ iterator) {
             auto &task = *iterator;
@@ -164,20 +241,12 @@ public:
             for (const auto &operand: task->ins) {
                 if (operand->has_generated) {
                     auto generate_point = operand->generate;
-                    auto occupy = Occupy {generate_point, iterator};
-                    if (essential.count(occupy)) {
-                        continue;
-                    }
-                    for (auto occupied = ++ generate_point; occupied != iterator; ++ occupied) {
-                        auto &occupied_task = *occupied;
-                        if (occupied_task->isDealloc() or occupied_task->usage_during_execution <= limit) {
-                            continue;
-                        }
-                        essential.insert(occupy);
-                        // printf("[%s, %s] occupies [%s, %s].\n", occupy.generate->get()->name.c_str(),
-                        //        occupy.use->get()->name.c_str(), occupied_task->name.c_str(),
-                        //        prettyBytes(occupied_task->usage_during_execution).c_str());
-                        break;
+                    if ((*generate_point)->time_point < peak_time_point and peak_time_point < (*iterator)->time_point) {
+                        auto occupy = Occupy::create(generate_point, iterator, operand,
+                                                     (*generate_point)->time, peak_memory, operand->size, limit);
+                        essential.push_back(occupy);
+                        // Query whether all the inputs of `generate_point` live at `iterator`
+                        task->queries.push_back(occupy);
                     }
                 }
             }
@@ -186,7 +255,45 @@ public:
                 operand->generate = iterator;
             }
         }
-        return essential;
+        for (auto &operand: operands) {
+            operand->exist = false;
+            operand->has_generated = false;
+        }
+        for (auto &task: schedule) {
+            for (auto &operand: task->ins) {
+                if (not operand->has_generated) {
+                    operand->exist = true;
+                    operand->has_generated = true;
+                }
+            }
+            for (auto &operand: task->outs) {
+                operand->has_generated = true;
+            }
+        }
+        for (auto &task: schedule) {
+            for (auto &query: task->queries) {
+                for (auto &operand: (*query->generate)->ins) {
+                    if (not operand->exist) {
+                        query->msps = 0;
+                        break;
+                    }
+                }
+            }
+            bool not_dealloc = not task->isDealloc();
+            for (auto &operand: task->outs) {
+                operand->exist = not_dealloc;
+            }
+        }
+        double best_msps = 0;
+        OccupyHandle best = nullptr;
+        for (auto &occupy: essential) {
+            if (occupy->msps > best_msps) {
+                best_msps = occupy->msps;
+                const auto &task = *occupy->generate;
+                best = occupy;
+            }
+        }
+        return best;
     }
 
     std::pair<size_t, uint64_t> statistics(bool force=false) {
@@ -203,22 +310,31 @@ public:
             size_t current_memory = 0;
             for (auto &operand: operands) {
                 operand->exist = false;
+                operand->has_generated = false;
             }
-            std::set<OprandHandle> exists;
             for (auto &task: schedule) {
                 for (auto &operand: task->ins) {
-                    if (not exists.count(operand)) {
+                    if (not operand->has_generated) {
                         operand->exist = true;
-                        exists.insert(operand);
+                        operand->has_generated = true;
                         current_memory += operand->size;
                     }
                 }
                 for (auto &operand: task->outs) {
-                    exists.insert(operand);
+                    operand->has_generated = true;
                 }
             }
             peak_memory = current_memory;
             for (auto &task: schedule) {
+                printf("Task: %s\n", task->name.c_str());
+                printf("Inputs:\n");
+                for (auto &operand: task->ins) {
+                    printf(" > %p\n", operand.get());
+                }
+                printf("Outputs:\n");
+                for (auto &operand: task->outs) {
+                    printf(" > %p\n", operand.get());
+                }
                 if (task->isDealloc()) {
                     assert(task->ins.empty());
                     assert(task->allExist(false));
@@ -227,6 +343,12 @@ public:
                     }
                     current_memory -= task->outsAmount();
                 } else {
+                    if (not task->allExist(true)) {
+                        printf("Error: task %s (%p)\n", task->name.c_str(), task.get());
+                        for (auto &operand: task->ins) {
+                            printf(" > %p\n", operand.get());
+                        }
+                    }
                     assert(task->allExist(true));
                     bool share = task->isShare();
                     for (auto &operand: task->outs) {
