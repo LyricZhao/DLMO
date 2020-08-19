@@ -110,10 +110,6 @@ struct Task {
         return name == ".dealloc";
     }
 
-    bool isShare() const {
-        return name == ".share";
-    }
-
     bool isForbidden() const {
         return name == ".host2device" or name == ".device2host" or name == ".sync" or name == ".alloc";
     }
@@ -158,6 +154,48 @@ struct Common {
             operands[id] = std::make_shared<Operand>(size);
         }
         return common;
+    }
+
+    bool check(TaskHandle &head) const {
+        // Clear status
+        for (auto &operand: operands) {
+            operand->clear();
+        }
+        for (auto &operand: already_on) {
+            operand->on_device = true;
+        }
+
+        // Simulate and check
+        LOOP(task, head) {
+            if (task->isDealloc()) {
+                for (auto &usage: task->outs) {
+                    if (not usage.operand->on_device) {
+                        return false;
+                    }
+                    usage.operand->on_device = false;
+                }
+            } else {
+                for (auto &usage: task->ins) {
+                    if (not usage.operand->on_device) {
+                        return false;
+                    }
+                }
+                for (auto &usage: task->outs) {
+                    usage.operand->on_device = true;
+                }
+            }
+        }
+
+        // Check final status
+        for (auto &operand: operands) {
+            if (operand->on_device and not not_dealloc.count(operand)) {
+                return false;
+            }
+            if (not operand->on_device and not_dealloc.count(operand)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     void analyze_placement(TaskHandle &head) {
@@ -363,16 +401,35 @@ struct Schedule {
             }
         }
         tail->next = nullptr;
+        if (schedule->common->check(schedule->head)) {
+            error("Origin schedule in file %s check failed.", path.c_str());
+        }
 
-        // Analyze common elements
+        // Analyze common elements and refactor to the format without .dealloc
         schedule->common->analyze_placement(schedule->head);
         schedule->common->refactor(schedule->head);
-        schedule->common->restore(schedule->head);
-        auto restored_json = schedule->common->toJson(schedule->head);
-        std::ofstream write("dump.json");
-        write << restored_json.dump(4) << std::endl;
-        std::exit(EXIT_SUCCESS);
+
         return schedule;
+    }
+
+    void dumpToFile(const std::string &path, bool restore=true, bool not_change=true) {
+        // Restore to the format with .dealloc
+        if (restore) {
+            common->restore(head);
+            if (common->check(head)) {
+                error("Check failed while dumping to file.\n");
+            }
+        }
+
+        // Dump into json
+        auto json = common->toJson(head);
+        std::ofstream file(path);
+        file << json.dump(4) << std::endl;
+
+        // Recover to original
+        if (restore and not_change) {
+            common->refactor(head);
+        }
     }
 
     std::string info() {
