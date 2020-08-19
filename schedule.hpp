@@ -55,6 +55,9 @@ struct Task {
     // Structure
     TaskHandle prev, next;
 
+    // Temporary uses
+    std::vector<OperandHandle> to_dealloc_after;
+
     nlohmann::json toJson(std::map<OperandHandle, int> &operand_to_id) {
         auto usage_to_json = [&operand_to_id](const std::vector<OperandUsage> &usages) {
             auto json = nlohmann::json::array();
@@ -88,6 +91,7 @@ struct Task {
         for (auto &usage: outs) {
             usage.prev_use = usage.next_use = usage.gen = nullptr;
         }
+        to_dealloc_after.clear();
     }
 
     size_t hash() {
@@ -267,6 +271,70 @@ struct Common {
                 prev_use[usage.operand] = nullptr;
             }
         }
+
+        // Analyze operands to dealloc
+        LOOP(task, head) {
+            for (auto &usage: task->ins) {
+                if (not usage.next_use and not not_dealloc.count(usage.operand)) {
+                    bool inOuts = false;
+                    // TODO: optimize the loop
+                    for (auto &out_usage: task->outs) {
+                        if (usage.operand == out_usage.operand) {
+                            inOuts = true;
+                            break;
+                        }
+                    }
+                    if (not inOuts) {
+                        task->to_dealloc_after.push_back(usage.operand);
+                    }
+                }
+            }
+        }
+    }
+
+    static uint64_t analyze_time(TaskHandle &head) {
+        uint64_t total_time = 0;
+        LOOP(task, head) {
+            total_time += task->duration;
+        }
+        return total_time;
+    }
+
+    size_t analyze_memory(TaskHandle &head) const {
+        // Analyze topology
+        analyze_topology(head);
+
+        // Operands already on device
+        size_t current_memory = 0;
+        for (auto &operand: operands) {
+            operand->on_device = false;
+        }
+        for (auto &operand: already_on) {
+            operand->on_device = true;
+            current_memory += operand->size;
+        }
+        size_t peak_memory = current_memory;
+
+        // Loop all tasks
+        LOOP(task, head) {
+            for (auto &usage: task->ins) {
+                assert(usage.operand->on_device);
+            }
+            for (auto &usage: task->outs) {
+                if (not usage.operand->on_device) {
+                    usage.operand->on_device = true;
+                    current_memory += usage.operand->size;
+                }
+            }
+            size_t execution_memory = current_memory + task->workspace;
+            peak_memory = std::max(peak_memory, execution_memory);
+
+            for (auto &operand: task->to_dealloc_after) {
+                operand->on_device = false;
+                current_memory -= operand->size;
+            }
+        }
+        return peak_memory;
     }
 
     static void refactor(TaskHandle &head) {
@@ -294,24 +362,8 @@ struct Common {
         // Insert .dealloc
         LOOP(task, head) {
             // Create new .dealloc
-            std::vector<OperandHandle> to_dealloc;
-            for (auto &usage: task->ins) {
-                if (not usage.next_use and not not_dealloc.count(usage.operand)) {
-                    bool inOuts = false;
-                    // TODO: optimize the loop
-                    for (auto &out_usage: task->outs) {
-                        if (usage.operand == out_usage.operand) {
-                            inOuts = true;
-                            break;
-                        }
-                    }
-                    if (not inOuts) {
-                        to_dealloc.push_back(usage.operand);
-                    }
-                }
-            }
-            if (not to_dealloc.empty()) {
-                auto new_task = Task::dealloc(to_dealloc);
+            if (not task->to_dealloc_after.empty()) {
+                auto new_task = Task::dealloc(task->to_dealloc_after);
                 auto origin_next = task->next;
                 task->next = new_task;
                 new_task->prev = task;
@@ -366,14 +418,8 @@ struct Schedule {
     std::pair<size_t, uint64_t> analyze() {
         if (not analyzed) {
             analyzed = true;
-            total_time = 0;
-
-            // Simulation for time
-            LOOP(task, head) {
-                total_time += task->duration;
-            }
-
-            // TODO: Simulation for memory
+            total_time = common->analyze_time(head);
+            peak_memory = common->analyze_memory(head);
         }
         return std::make_pair(peak_memory, total_time);
     }
@@ -409,6 +455,13 @@ struct Schedule {
         // Analyze common elements and refactor to the format without .dealloc
         schedule->common->analyze_placement(schedule->head);
         schedule->common->refactor(schedule->head);
+
+        // Simple debugging checks
+        // schedule->common->restore(schedule->head);
+        // if (schedule->common->check(schedule->head)) {
+        //     error("Check failed after restore.");
+        // }
+        // schedule->common->refactor(schedule->head);
 
         return schedule;
     }
