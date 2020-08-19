@@ -5,17 +5,17 @@
 class Timer {
     typedef std::chrono::time_point<std::chrono::system_clock, std::chrono::nanoseconds> NanoTimePoint;
 
-    NanoTimePoint lastTimePoint_;
+    NanoTimePoint lastTimePoint;
 
 public:
     Timer() {
-        lastTimePoint_ = std::chrono::system_clock::now();
+        lastTimePoint = std::chrono::system_clock::now();
     }
 
     uint64_t tik() {
         NanoTimePoint timePoint = std::chrono::system_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(timePoint - lastTimePoint_);
-        lastTimePoint_ = timePoint;
+        auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(timePoint - lastTimePoint);
+        lastTimePoint = timePoint;
         return duration.count();
     }
 };

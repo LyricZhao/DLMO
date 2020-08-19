@@ -6,6 +6,7 @@
 #include <set>
 #include <sstream>
 #include <vector>
+#include <fstream>
 
 #include "json.hpp"
 #include "utils.hpp"
@@ -459,7 +460,7 @@ struct Comparator {
 
     static constexpr double MEMORY_FACTOR = 0.6;
     static constexpr double TIME_FACTOR = 1 - MEMORY_FACTOR;
-    static constexpr double RECONSIDER_RATIO = 2 ;
+    static constexpr double RECONSIDER_RATIO = 2;
     static constexpr double TIME_REQUIREMENT_RATIO = 1.01;
 
     double score(const ScheduleHandle &s) const {
