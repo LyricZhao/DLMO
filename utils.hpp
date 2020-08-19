@@ -113,3 +113,5 @@ public:
         return 0;
     }
 };
+
+#define LOOP(var, list_head) for(auto (var) = (list_head); (var); (var) = (var)->next)

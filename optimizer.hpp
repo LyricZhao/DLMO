@@ -22,21 +22,16 @@ public:
         return "optimizer (limit " + prettyBytes(limit) + ")";
     }
 
+    // TODO: finish
     std::vector<ScheduleHandle> generateSubstitutions(const ScheduleHandle &schedule) const {
-        auto new_schedule = schedule->copy();
-        auto best = new_schedule->analyze_essential(limit);
-        if (not best) {
-            return {};
-        }
-        new_schedule->apply(best);
-        return {new_schedule};
+        return {};
     };
 
     void optimize(const ScheduleHandle &origin) const {
         ScheduleHandle best = origin;
-        auto comparator = Schedule::Comparator{origin->statistics().second, limit};
+        auto comparator = Comparator{origin->analyze().second, limit};
         std::set<size_t> hash_set;
-        std::priority_queue<ScheduleHandle, std::vector<ScheduleHandle>, Schedule::Comparator> queue(comparator);
+        std::priority_queue<ScheduleHandle, std::vector<ScheduleHandle>, Comparator> queue(comparator);
 
         // Source
         queue.push(origin);
