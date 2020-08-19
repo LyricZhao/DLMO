@@ -112,7 +112,7 @@ def merge(function_path, timeline_path, memory_path, pattern_path):
             # print(code, workspaces[name][index::op_counts[name]])
             pass
         record = Record(name, code['ins'], code['outs'],
-                        workspaces[name][index],  # TODO: temporarily choose the first
+                        workspaces[name][index + op_counts[name]],  # TODO: temporarily choose the second
                         average(times[name][index::op_counts[name]]) if not name.startswith('.') else 0)
         records.append(record)
 
