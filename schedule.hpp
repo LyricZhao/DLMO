@@ -209,9 +209,9 @@ public:
             }
         }
         schedule.insert(++ iterator, Task::dealloc({occupy->to_dealloc}));
-        printf("To dealloc: %p\n", occupy->to_dealloc.get());
-        printf("Regenerate: [%s (%p), %s]\n", (*occupy->generate)->name.c_str(), (*occupy->generate).get(),
-                (*occupy->use)->name.c_str());
+        // printf("To dealloc: %p\n", occupy->to_dealloc.get());
+        // printf("Regenerate: [%s (%p), %s]\n", (*occupy->generate)->name.c_str(), (*occupy->generate).get(),
+        //        (*occupy->use)->name.c_str());
         schedule.insert(occupy->use, (*occupy->generate)->copy());
     }
 
@@ -273,7 +273,7 @@ public:
         for (auto &task: schedule) {
             for (auto &query: task->queries) {
                 for (auto &operand: (*query->generate)->ins) {
-                    if (not operand->exist) {
+                    if (not operand->exist or operand == (*query).to_dealloc) {
                         query->msps = 0;
                         break;
                     }
@@ -293,7 +293,10 @@ public:
                 best = occupy;
             }
         }
-        return best;
+        if (best_msps > 0) {
+            return best;
+        }
+        return nullptr;
     }
 
     std::pair<size_t, uint64_t> statistics(bool force=false) {
@@ -326,15 +329,15 @@ public:
             }
             peak_memory = current_memory;
             for (auto &task: schedule) {
-                printf("Task: %s\n", task->name.c_str());
-                printf("Inputs:\n");
-                for (auto &operand: task->ins) {
-                    printf(" > %p\n", operand.get());
-                }
-                printf("Outputs:\n");
-                for (auto &operand: task->outs) {
-                    printf(" > %p\n", operand.get());
-                }
+                // printf("Task: %s\n", task->name.c_str());
+                // printf("Inputs:\n");
+                // for (auto &operand: task->ins) {
+                //     printf(" > %p\n", operand.get());
+                // }
+                // printf("Outputs:\n");
+                // for (auto &operand: task->outs) {
+                //     printf(" > %p\n", operand.get());
+                // }
                 if (task->isDealloc()) {
                     assert(task->ins.empty());
                     assert(task->allExist(false));
@@ -416,9 +419,9 @@ public:
         uint64_t origin_time;
         size_t limit;
 
-        static constexpr double MEMORY_FACTOR = 0.5;
+        static constexpr double MEMORY_FACTOR = 0.6;
         static constexpr double TIME_FACTOR = 1 - MEMORY_FACTOR;
-        static constexpr double RECONSIDER_RATIO = 1.05;
+        static constexpr double RECONSIDER_RATIO = 2 ;
         static constexpr double TIME_REQUIREMENT_RATIO = 1.01;
 
         double score(const ScheduleHandle &s) const {
@@ -450,8 +453,8 @@ public:
         }
 
         bool considerable(const ScheduleHandle &s1, const ScheduleHandle &s2) const {
-            // Return whether `s1` is considerable comparing to `s2` (possibly the best)
-            return score(s1) < score(s2) * RECONSIDER_RATIO;
+            // Return whether `s2` is considerable comparing to `s1` (possibly the best)
+            return score(s1) * RECONSIDER_RATIO > score(s2);
         }
     };
 };

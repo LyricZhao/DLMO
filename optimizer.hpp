@@ -22,10 +22,12 @@ public:
         return "optimizer (limit " + prettyBytes(limit) + ")";
     }
 
-    // TODO: finish coding
     std::vector<ScheduleHandle> generateSubstitutions(const ScheduleHandle &schedule) const {
         auto new_schedule = schedule->copy();
         auto best = new_schedule->analyze_essential(limit);
+        if (not best) {
+            return {};
+        }
         new_schedule->apply(best);
         return {new_schedule};
     };
@@ -61,11 +63,11 @@ public:
                 if (hash_set.count(substitution->hash())) {
                     continue;
                 }
-                if (comparator.considerable(substitution, best)) {
+                if (comparator.considerable(best, substitution)) {
                     queue.push(substitution);
                     hash_set.insert(substitution->hash());
                 }
-                if (comparator(substitution, best)) {
+                if (comparator(best, substitution)) {
                     best = substitution;
                 }
             }
