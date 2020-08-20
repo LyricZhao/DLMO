@@ -11,6 +11,8 @@
 #include "json.hpp"
 #include "utils.hpp"
 
+// TODO: support .share operator
+
 struct Operand;
 typedef std::shared_ptr<Operand> OperandHandle;
 
@@ -46,7 +48,7 @@ struct OperandUsage {
 };
 
 struct Task {
-    // Can be shared by other schedules
+    // Can not be shared by other schedules
     std::string name = "none";
     size_t workspace = 0;
     std::vector<OperandUsage> ins, outs;
@@ -61,6 +63,19 @@ struct Task {
     int time_stamp;
     size_t execution_memory;
     std::vector<OperandHandle> to_dealloc_after;
+
+    // TODO: it's not efficient
+    TaskHandle copy() const {
+        auto new_task = std::make_shared<Task>();
+        new_task->name = name;
+        new_task->workspace = workspace;
+        new_task->ins = ins;
+        new_task->outs = outs;
+        new_task->hash_calculated = hash_calculated;
+        new_task->hash_value = hash_value;
+        new_task->duration = duration;
+        return new_task;
+    }
 
     nlohmann::json toJson(std::map<OperandHandle, int> &operand_to_id) {
         auto usage_to_json = [&operand_to_id](const std::vector<OperandUsage> &usages) {
@@ -187,7 +202,6 @@ struct Occupy {
         long long memory_increased = 0;
         // Prolong dealloc time (memory increased)
         for (auto &usage: gen->ins) {
-            // TODO: generate usage.last_use
             if ((not usage.last_use or usage.last_use->time_stamp < peak_time_stamp) and (not gen->contains(usage.operand))) {
                 memory_increased += usage.operand->size;
             }
@@ -219,8 +233,8 @@ struct Common {
     std::set<OperandHandle> already_on;
     std::set<OperandHandle> not_dealloc;
 
-    static constexpr int OCCUPIES_LIMIT = 10;
-    static constexpr int RANDOM_LIMIT = 5;
+    static constexpr int OCCUPIES_LIMIT = 1;
+    static constexpr int RANDOM_LIMIT = 0;
 
     static CommonHandle fromJson(const nlohmann::json &json) {
         auto common = std::make_shared<Common>();
@@ -278,7 +292,7 @@ struct Common {
         return true;
     }
 
-    void analyze_placement(TaskHandle &head) {
+    void analyzePlacement(TaskHandle &head) {
         // Clear status
         not_dealloc.clear();
         already_on.clear();
@@ -311,7 +325,7 @@ struct Common {
         }
     }
 
-    void analyze_topology(TaskHandle &head) const {
+    void analyzeTopology(TaskHandle &head) const {
         // Clear status
         for (auto &operand: operands) {
             operand->clear();
@@ -372,7 +386,7 @@ struct Common {
         }
     }
 
-    static uint64_t analyze_time(TaskHandle &head) {
+    static uint64_t analyzeTime(TaskHandle &head) {
         uint64_t total_time = 0;
         LOOP(task, head) {
             total_time += task->duration;
@@ -380,9 +394,9 @@ struct Common {
         return total_time;
     }
 
-    size_t analyze_memory(TaskHandle &head) const {
+    size_t analyzeMemory(TaskHandle &head) const {
         // Analyze topology
-        analyze_topology(head);
+        analyzeTopology(head);
 
         // Operands already on device
         size_t current_memory = 0;
@@ -417,8 +431,8 @@ struct Common {
         return peak_memory;
     }
 
-    static std::vector<Occupy> analyze_occupies(TaskHandle &head, size_t peak_memory, uint64_t origin_time) {
-        // Run this function after running analyze_topology and analyze_memory
+    static std::vector<Occupy> analyzeOccupies(TaskHandle &head, size_t peak_memory, uint64_t origin_time) {
+        // Run this function after running analyzeTopology and analyzeMemory
         // Mark tasks and get the peak one
         int time_stamp = 0, peak_time_stamp = 0;
         LOOP(task, head) {
@@ -447,34 +461,34 @@ struct Common {
         }
 
         // Get scores
-        std::vector<Occupy> sorted;
+        std::vector<Occupy> essentials;
         for (auto &occupy: occupies) {
             auto copied = occupy;
             copied.calculate(peak_time_stamp, peak_memory, origin_time);
-            sorted.push_back(copied);
+            essentials.push_back(copied);
         }
-        std::sort(sorted.begin(), sorted.end(), [](const Occupy &o1, const Occupy &o2) {
+        std::sort(essentials.begin(), essentials.end(), [](const Occupy &o1, const Occupy &o2) {
             return o1.score < o2.score;
         });
 
         // Pruning
-        if (sorted.size() > OCCUPIES_LIMIT + RANDOM_LIMIT) {
+        if (essentials.size() > OCCUPIES_LIMIT + RANDOM_LIMIT) {
             // Randomly select some between [OCCUPIES_LIMIT, sorted.size())
-            auto random = Random(OCCUPIES_LIMIT, sorted.size());
+            auto random = Random(OCCUPIES_LIMIT, essentials.size());
             for (int i = 0; i < RANDOM_LIMIT; ++ i) {
-                std::swap(sorted[OCCUPIES_LIMIT + i], sorted[random()]);
+                std::swap(essentials[OCCUPIES_LIMIT + i], essentials[random()]);
             }
-            sorted.resize(OCCUPIES_LIMIT + RANDOM_LIMIT);
+            essentials.resize(OCCUPIES_LIMIT + RANDOM_LIMIT);
             // Release unused memory
-            sorted.shrink_to_fit();
+            essentials.shrink_to_fit();
         }
 
         // Debug print
-        // for (auto &copied: sorted) {
+        // for (auto &copied: essentials) {
         //     printf("[%s (%p), %s] occupies, score=%.6lf.\n", copied.gen->name.c_str(),
         //            copied.gen.get(), copied.use->name.c_str(), copied.score);
         // }
-        return sorted;
+        return essentials;
     }
 
     static void refactor(TaskHandle &head) {
@@ -497,7 +511,7 @@ struct Common {
 
     void restore(TaskHandle &head) const {
         // Analyze topology
-        analyze_topology(head);
+        analyzeTopology(head);
 
         // Insert .dealloc
         LOOP(task, head) {
@@ -559,11 +573,40 @@ struct Schedule {
     std::pair<size_t, uint64_t> analyze() {
         if (not analyzed) {
             analyzed = true;
-            total_time = common->analyze_time(head);
-            peak_memory = common->analyze_memory(head);
-            occupies = common->analyze_occupies(head, peak_memory, total_time);
+            total_time = common->analyzeTime(head);
+            peak_memory = common->analyzeMemory(head);
+            occupies = common->analyzeOccupies(head, peak_memory, total_time);
         }
         return std::make_pair(peak_memory, total_time);
+    }
+
+    ScheduleHandle apply(const Occupy &occupy) const {
+        // Generate new
+        auto new_schedule = std::make_shared<Schedule>();
+        new_schedule->common = common;
+
+        // Copy list and insert re-computation
+        auto &new_head = new_schedule->head;
+        TaskHandle tail;
+        auto insert_back = [&new_head, &tail](const TaskHandle &task) {
+            if (not tail) {
+                new_head = task;
+                task->prev = task->next = nullptr;
+            } else {
+                tail->next = task;
+                task->prev = tail;
+                task->next = nullptr;
+            }
+            tail = task;
+        };
+        LOOP(task, head) {
+            if (task == occupy.use) {
+                insert_back(occupy.gen->copy());
+            }
+            insert_back(task->copy());
+        }
+
+        return new_schedule;
     }
 
     static ScheduleHandle fromFile(const std::string &path) {
@@ -595,7 +638,7 @@ struct Schedule {
         }
 
         // Analyze common elements and refactor to the format without .dealloc
-        schedule->common->analyze_placement(schedule->head);
+        schedule->common->analyzePlacement(schedule->head);
         schedule->common->refactor(schedule->head);
 
         // Simple debugging checks

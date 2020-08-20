@@ -9,7 +9,7 @@
 
 class Optimizer {
     static constexpr int QUEUE_SIZE_LIMIT = 100000;
-    static constexpr int SEARCH_LIMIT = 1000;
+    static constexpr int SEARCH_LIMIT = 1;
 
     size_t limit;
 
@@ -22,9 +22,19 @@ public:
         return "optimizer (limit " + prettyBytes(limit) + ")";
     }
 
-    // TODO: finish
-    std::vector<ScheduleHandle> generateSubstitutions(const ScheduleHandle &schedule) const {
-        return {};
+    static std::vector<ScheduleHandle> generateSubstitutions(const ScheduleHandle &schedule) {
+        // Analyze schedule
+        schedule->analyze();
+
+        // Re-generate graph
+        printf(" @ Generating substitutions (count: %zu, peak: %s, time: %s) ...\n", schedule->occupies.size(),
+               prettyBytes(schedule->peak_memory).c_str(), prettyNanoseconds(schedule->total_time).c_str());
+        std::vector<ScheduleHandle> substitutions;
+        for (auto &occupy: schedule->occupies) {
+            printf("   @ [%s, %s] occupies (score=%.6lf)\n", occupy.gen->name.c_str(), occupy.use->name.c_str(), occupy.score);
+            substitutions.push_back(schedule->apply(occupy));
+        }
+        return substitutions;
     };
 
     void optimize(const ScheduleHandle &origin) const {
