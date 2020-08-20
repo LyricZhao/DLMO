@@ -8,8 +8,8 @@
 #include "utils.hpp"
 
 class Optimizer {
-    static constexpr int QUEUE_SIZE_LIMIT = 100000;
-    static constexpr int SEARCH_LIMIT = 1;
+    static constexpr int QUEUE_SIZE_LIMIT = 100;
+    static constexpr int SEARCH_LIMIT = 10000;
 
     size_t limit;
 
@@ -27,12 +27,16 @@ public:
         schedule->analyze();
 
         // Re-generate graph
-        printf(" @ Generating substitutions (count: %zu, peak: %s, time: %s) ...\n", schedule->occupies.size(),
-               prettyBytes(schedule->peak_memory).c_str(), prettyNanoseconds(schedule->total_time).c_str());
+        // printf(" @ Generating substitutions (count: %zu, peak: %s, time: %s) ...\n", schedule->occupies.size(),
+        //        prettyBytes(schedule->peak_memory).c_str(), prettyNanoseconds(schedule->total_time).c_str());
         std::vector<ScheduleHandle> substitutions;
         for (auto &occupy: schedule->occupies) {
-            printf("   @ [%s, %s] occupies (score=%.6lf)\n", occupy.gen->name.c_str(), occupy.use->name.c_str(), occupy.score);
-            substitutions.push_back(schedule->apply(occupy));
+            // printf("   @ [%s, %s] occupies (score=%.6lf)\n", occupy.gen->name.c_str(), occupy.use->name.c_str(), occupy.score);
+            auto new_schedule = schedule->apply(occupy);
+            substitutions.push_back(new_schedule);
+            new_schedule->analyze();
+            // printf("   @ Optimized to (peak: %s, memory: %s)\n", prettyBytes(new_schedule->peak_memory).c_str(),
+            //        prettyNanoseconds(new_schedule->total_time).c_str());
         }
         return substitutions;
     };
@@ -51,6 +55,7 @@ public:
         printf(" > Start back-tracing search from source (%s)\n", origin->info().c_str());
         Timer timer;
         int count = 0;
+        bool first_warning = true;
         while (not queue.empty()) {
             auto top = queue.top();
             queue.pop();
@@ -62,7 +67,10 @@ public:
             // Insert and check
             for (auto &substitution: substitutions) {
                 if (queue.size() == QUEUE_SIZE_LIMIT) {
-                    warning("Reaching searching queue size limit %d\n", QUEUE_SIZE_LIMIT);
+                    if (first_warning) {
+                        warning("Reaching searching queue size limit %d\n", QUEUE_SIZE_LIMIT);
+                        first_warning = false;
+                    }
                     break;
                 }
                 if (hash_set.count(substitution->hash())) {

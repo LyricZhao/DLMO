@@ -12,6 +12,7 @@
 #include "utils.hpp"
 
 // TODO: support .share operator
+// TODO: dead code elimination
 
 struct Operand;
 typedef std::shared_ptr<Operand> OperandHandle;
@@ -29,11 +30,12 @@ typedef std::shared_ptr<Schedule> ScheduleHandle;
 struct Operand {
     // Can be shared by other schedules
     size_t size = 0;
+    int id = 0;
 
     // Temporary uses
     bool on_device = false, occurred = false;
 
-    explicit Operand(size_t size): size(size) {}
+    explicit Operand(size_t size, int id): size(size), id(id) {}
 
     void clear() {
         on_device = occurred = false;
@@ -77,11 +79,11 @@ struct Task {
         return new_task;
     }
 
-    nlohmann::json toJson(std::map<OperandHandle, int> &operand_to_id) {
-        auto usage_to_json = [&operand_to_id](const std::vector<OperandUsage> &usages) {
+    nlohmann::json toJson() {
+        auto usage_to_json = [](const std::vector<OperandUsage> &usages) {
             auto json = nlohmann::json::array();
             for (auto &usage: usages) {
-                json.push_back(operand_to_id[usage.operand]);
+                json.push_back(usage.operand->id);
             }
             return json;
         };
@@ -126,7 +128,7 @@ struct Task {
     }
 
     OperandUsage& find(const OperandHandle &operand, bool is_out=true) {
-        auto vec = is_out ? outs : ins;
+        auto &vec = is_out ? outs : ins;
         for (auto &usage: vec) {
             if (usage.operand == operand) {
                 return usage;
@@ -214,12 +216,12 @@ struct Occupy {
         }
 
         // Calculate score, lower is better
-        // size_t signed_memory = memory_increased > 0 ? memory_increased : -memory_increased;
-        // printf("[%s, %s] memory: %c%s, time: %s\n", gen->name.c_str(), use->name.c_str(),
-        //        memory_increased > 0 ? '+' : '-', prettyBytes(signed_memory).c_str(),
-        // prettyNanoseconds(time_increased).c_str());
         score = static_cast<double>(memory_increased) / peak_memory * MEMORY_FACTOR;
         score += static_cast<double>(time_increased) / origin_time * TIME_FACTOR;
+        // size_t signed_memory = memory_increased > 0 ? memory_increased : -memory_increased;
+        // printf("[%s, %s] memory: %c%s, time: %s, score=%.6lf\n", gen->name.c_str(), use->name.c_str(),
+        //        memory_increased > 0 ? '+' : '-', prettyBytes(signed_memory).c_str(),
+        //        prettyNanoseconds(time_increased).c_str(), score);
     }
 
     bool operator < (const Occupy &another) const {
@@ -233,8 +235,8 @@ struct Common {
     std::set<OperandHandle> already_on;
     std::set<OperandHandle> not_dealloc;
 
-    static constexpr int OCCUPIES_LIMIT = 1;
-    static constexpr int RANDOM_LIMIT = 0;
+    static constexpr int OCCUPIES_LIMIT = 2;
+    static constexpr int RANDOM_LIMIT = 1;
 
     static CommonHandle fromJson(const nlohmann::json &json) {
         auto common = std::make_shared<Common>();
@@ -245,7 +247,7 @@ struct Common {
             if (id >= operands.size()) {
                 operands.resize(id + 1);
             }
-            operands[id] = std::make_shared<Operand>(size);
+            operands[id] = std::make_shared<Operand>(size, id);
         }
         return common;
     }
@@ -347,18 +349,18 @@ struct Common {
                 // TODO: the operation is time consuming
                 // Set the previous' next to current task
                 if (usage.prev_use) {
-                    for (auto &prev_usage: usage.prev_use->ins) {
-                        if (prev_usage.operand == usage.operand) {
-                            prev_usage.next_use = task;
-                            break;
-                        }
-                    }
+                    auto &prev_usage = usage.prev_use->find(usage.operand, false);
+                    prev_usage.next_use = task;
+                }
+                if (usage.gen) {
+                    auto &gen_usage = usage.gen->find(usage.operand);
+                    gen_usage.next_use = task;
                 }
             }
             for (auto &usage: task->outs) {
                 // The generating task will not have next_use
-                gen[usage.operand] = task;
-                prev_use[usage.operand] = nullptr;
+                usage.gen = gen[usage.operand] = task;
+                usage.prev_use = prev_use[usage.operand] = nullptr;
             }
         }
 
@@ -367,6 +369,12 @@ struct Common {
         LOOP(task, head) {
             for (auto &usage: task->ins) {
                 if (not usage.next_use and not not_dealloc.count(usage.operand) and not task->contains(usage.operand)) {
+                    task->to_dealloc_after.push_back(usage.operand);
+                }
+            }
+            // TODO: Code elimination
+            for (auto &usage: task->outs) {
+                if (not usage.next_use and not not_dealloc.count(usage.operand)) {
                     task->to_dealloc_after.push_back(usage.operand);
                 }
             }
@@ -422,6 +430,7 @@ struct Common {
             }
             task->execution_memory = current_memory + task->workspace;
             peak_memory = std::max(peak_memory, task->execution_memory);
+            // printf("@%s: %s\n", task->name.c_str(), prettyBytes(task->execution_memory).c_str());
 
             for (auto &operand: task->to_dealloc_after) {
                 operand->on_device = false;
@@ -536,11 +545,8 @@ struct Common {
         // Push operands
         json["operands"] = nlohmann::json::array();
         auto &operands_json = json["operands"];
-        int id = 0;
-        std::map<OperandHandle, int> operand_to_id;
         for (auto &operand: operands) {
-            operand_to_id[operand] = id;
-            auto operand_json = nlohmann::json::array({id ++, operand->size});
+            auto operand_json = nlohmann::json::array({operand->id, operand->size});
             operands_json.push_back(operand_json);
         }
 
@@ -548,7 +554,7 @@ struct Common {
         json["records"] = nlohmann::json::array();
         auto &records_json = json["records"];
         LOOP(task, head) {
-            records_json.push_back(task->toJson(operand_to_id));
+            records_json.push_back(task->toJson());
         }
 
         return json;
@@ -696,7 +702,7 @@ struct Comparator {
     uint64_t origin_time;
     size_t limit;
 
-    static constexpr double MEMORY_FACTOR = 0.6;
+    static constexpr double MEMORY_FACTOR = 0.8;
     static constexpr double TIME_FACTOR = 1 - MEMORY_FACTOR;
     static constexpr double RECONSIDER_RATIO = 2;
     static constexpr double TIME_REQUIREMENT_RATIO = 1.01;

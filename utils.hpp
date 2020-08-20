@@ -36,7 +36,7 @@ void error(const char *fmt, ...) {
     vfprintf(stderr, fmt, args);
     va_end(args);
 
-    fprintf(stderr, "\n\033[0m");
+    fprintf(stderr, "\033[0m");
     fflush(stderr);
     std::exit(EXIT_FAILURE);
 }
@@ -49,7 +49,7 @@ void warning(const char *fmt, ...) {
     vfprintf(stderr, fmt, args);
     va_end(args);
 
-    fprintf(stderr, "\n\033[0m");
+    fprintf(stderr, "\033[0m");
     fflush(stderr);
 }
 
