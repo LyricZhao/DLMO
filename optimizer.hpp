@@ -8,8 +8,8 @@
 #include "utils.hpp"
 
 class Optimizer {
-    static constexpr int QUEUE_SIZE_LIMIT = 100;
-    static constexpr int SEARCH_LIMIT = 10000;
+    static constexpr int QUEUE_SIZE_LIMIT = 120;
+    static constexpr int SEARCH_LIMIT = 1000;
 
     size_t limit;
 
@@ -32,6 +32,12 @@ public:
         std::vector<ScheduleHandle> substitutions;
         for (auto &occupy: schedule->occupies) {
             // printf("   @ [%s, %s] occupies (score=%.6lf)\n", occupy.gen->name.c_str(), occupy.use->name.c_str(), occupy.score);
+            // for (auto &usage: occupy.gen->ins) {
+            //     printf("     @ In: %d\n", usage.operand->id);
+            // }
+            // for (auto &usage: occupy.gen->outs) {
+            //     printf("     @ Out: %d\n", usage.operand->id);
+            // }
             auto new_schedule = schedule->apply(occupy);
             substitutions.push_back(new_schedule);
             new_schedule->analyze();
@@ -101,6 +107,6 @@ public:
         printf("   > Schedules searched: %d\n", count);
         printf("   > Time used: %s\n", prettyNanoseconds(timer.tik()).c_str());
         printf("   > Best: {%s}\n", best->info().c_str());
-        printf("   > Satisfy: %s\n", comparator.satisfy(best) ? "true" : "false");
+        printf("   > Satisfy memory: %s\n", best->peak_memory <= limit ? "true" : "false");
     }
 };

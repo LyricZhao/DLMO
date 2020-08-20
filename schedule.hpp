@@ -13,6 +13,7 @@
 
 // TODO: support .share operator
 // TODO: dead code elimination
+// TODO: inplace operators generation list
 
 struct Operand;
 typedef std::shared_ptr<Operand> OperandHandle;
@@ -57,6 +58,7 @@ struct Task {
     bool hash_calculated = false;
     size_t hash_value = 0;
     uint64_t duration = 0;
+    bool inplace = false;
 
     // Structure
     TaskHandle prev, next;
@@ -76,6 +78,7 @@ struct Task {
         new_task->hash_calculated = hash_calculated;
         new_task->hash_value = hash_value;
         new_task->duration = duration;
+        new_task->inplace = inplace;
         return new_task;
     }
 
@@ -180,6 +183,19 @@ struct Task {
         fill(task->outs, json[2]);
         task->workspace = json[3];
         task->duration = Unit::us(static_cast<double>(json[4]));
+
+        // Detect inplace
+        std::set<OperandHandle> ins;
+        for (auto &usage: task->ins) {
+            ins.insert(usage.operand);
+        }
+        task->inplace = false;
+        for (auto &usage: task->outs) {
+            if (ins.count(usage.operand)) {
+                task->inplace = true;
+                break;
+            }
+        }
 
         // TODO: JSON file has .host2device-like operators
         assert(not task->isForbidden());
@@ -459,7 +475,8 @@ struct Common {
                 continue;
             }
             for (auto &usage: task->ins) {
-                if (usage.gen and usage.gen->time_stamp < peak_time_stamp) {
+                // TODO: consider inplace
+                if (usage.gen and not usage.gen->inplace and usage.gen->time_stamp < peak_time_stamp) {
                     auto occupy = Occupy {usage.gen, task};
                     // .count is a must, because we only accept the first usage
                     if (not occupies.count(occupy)) {
