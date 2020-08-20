@@ -38,17 +38,11 @@ struct Operand {
     }
 };
 
-struct Occupy {
-    TaskHandle gen, use;
-
-    bool operator < (const Occupy &another) const {
-        return gen == another.gen ? use < another.use : gen < another.gen;
-    }
-};
-
 struct OperandUsage {
     OperandHandle operand;
-    TaskHandle gen, prev_use, next_use;
+
+    // Temporary uses
+    TaskHandle gen, prev_use, next_use, last_use;
 };
 
 struct Task {
@@ -95,13 +89,37 @@ struct Task {
     }
 
     void clear() {
+        time_stamp = 0;
+        execution_memory = 0;
         for (auto &usage: ins) {
-            usage.prev_use = usage.next_use = usage.gen = nullptr;
+            usage.prev_use = usage.next_use = usage.gen = usage.last_use = nullptr;
         }
         for (auto &usage: outs) {
-            usage.prev_use = usage.next_use = usage.gen = nullptr;
+            usage.prev_use = usage.next_use = usage.gen = usage.last_use = nullptr;
         }
         to_dealloc_after.clear();
+    }
+
+    bool contains(const OperandHandle &operand, bool is_out=true) const {
+        auto vec = is_out ? outs : ins;
+        for (auto &usage: vec) {
+            if (usage.operand == operand) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    OperandUsage& find(const OperandHandle &operand, bool is_out=true) {
+        auto vec = is_out ? outs : ins;
+        for (auto &usage: vec) {
+            if (usage.operand == operand) {
+                return usage;
+            }
+        }
+        error("Not found");
+        // Unreachable part
+        return outs[0];
     }
 
     size_t hash() {
@@ -152,10 +170,57 @@ struct Task {
     }
 };
 
+struct Occupy {
+    // It's different with comparator
+    static constexpr double MEMORY_FACTOR = 0.5;
+    static constexpr double TIME_FACTOR = 1 - MEMORY_FACTOR;
+
+    TaskHandle gen, use;
+    double score;
+
+    void calculate(int peak_time_stamp, size_t peak_memory, uint64_t origin_time) {
+        // Time increased
+        uint64_t time_increased = gen->duration;
+
+        // Memory increased
+        // Use `signed long long` instead of `size_t`
+        long long memory_increased = 0;
+        // Prolong dealloc time (memory increased)
+        for (auto &usage: gen->ins) {
+            // TODO: generate usage.last_use
+            if ((not usage.last_use or usage.last_use->time_stamp < peak_time_stamp) and (not gen->contains(usage.operand))) {
+                memory_increased += usage.operand->size;
+            }
+        }
+        // Re-computation (memory decreased)
+        for (auto &usage: use->ins) {
+            if (gen->contains(usage.operand) and (not usage.prev_use or usage.prev_use->time_stamp < peak_time_stamp)) {
+                memory_increased -= usage.operand->size;
+            }
+        }
+
+        // Calculate score, lower is better
+        // size_t signed_memory = memory_increased > 0 ? memory_increased : -memory_increased;
+        // printf("[%s, %s] memory: %c%s, time: %s\n", gen->name.c_str(), use->name.c_str(),
+        //        memory_increased > 0 ? '+' : '-', prettyBytes(signed_memory).c_str(),
+        // prettyNanoseconds(time_increased).c_str());
+        score = static_cast<double>(memory_increased) / peak_memory * MEMORY_FACTOR;
+        score += static_cast<double>(time_increased) / origin_time * TIME_FACTOR;
+    }
+
+    bool operator < (const Occupy &another) const {
+        // We only compare the generation time, because we only accept the first usage after peak
+        return gen < another.gen;
+    }
+};
+
 struct Common {
     std::vector<OperandHandle> operands;
     std::set<OperandHandle> already_on;
     std::set<OperandHandle> not_dealloc;
+
+    static constexpr int OCCUPIES_LIMIT = 10;
+    static constexpr int RANDOM_LIMIT = 5;
 
     static CommonHandle fromJson(const nlohmann::json &json) {
         auto common = std::make_shared<Common>();
@@ -277,26 +342,31 @@ struct Common {
                 }
             }
             for (auto &usage: task->outs) {
+                // The generating task will not have next_use
                 gen[usage.operand] = task;
                 prev_use[usage.operand] = nullptr;
             }
         }
 
         // Analyze operands to dealloc
+        TaskHandle tail;
         LOOP(task, head) {
             for (auto &usage: task->ins) {
-                if (not usage.next_use and not not_dealloc.count(usage.operand)) {
-                    bool inOuts = false;
-                    // TODO: optimize the loop
-                    for (auto &out_usage: task->outs) {
-                        if (usage.operand == out_usage.operand) {
-                            inOuts = true;
-                            break;
-                        }
-                    }
-                    if (not inOuts) {
-                        task->to_dealloc_after.push_back(usage.operand);
-                    }
+                if (not usage.next_use and not not_dealloc.count(usage.operand) and not task->contains(usage.operand)) {
+                    task->to_dealloc_after.push_back(usage.operand);
+                }
+            }
+            tail = task;
+        }
+
+        // Analyze last use
+        LOOP_BACK(task, tail) {
+            for (auto &usage: task->ins) {
+                if (usage.next_use) {
+                    auto &next_use = usage.next_use->find(usage.operand, false);
+                    usage.last_use = next_use.last_use ? next_use.last_use : usage.next_use;
+                } else {
+                    usage.last_use = nullptr;
                 }
             }
         }
@@ -347,7 +417,7 @@ struct Common {
         return peak_memory;
     }
 
-    static std::vector<Occupy> analyze_occupies(TaskHandle &head, size_t peak_memory) {
+    static std::vector<Occupy> analyze_occupies(TaskHandle &head, size_t peak_memory, uint64_t origin_time) {
         // Run this function after running analyze_topology and analyze_memory
         // Mark tasks and get the peak one
         int time_stamp = 0, peak_time_stamp = 0;
@@ -362,16 +432,49 @@ struct Common {
         // Get all occupying pairs
         std::set<Occupy> occupies;
         LOOP(task, head) {
+            if (peak_time_stamp >= task->time_stamp) {
+                continue;
+            }
             for (auto &usage: task->ins) {
-                if (usage.gen and usage.gen->time_stamp < peak_time_stamp and peak_time_stamp < task->time_stamp) {
-                    occupies.insert(Occupy {usage.gen, task});
+                if (usage.gen and usage.gen->time_stamp < peak_time_stamp) {
+                    auto occupy = Occupy {usage.gen, task};
+                    // .count is a must, because we only accept the first usage
+                    if (not occupies.count(occupy)) {
+                        occupies.insert(Occupy {usage.gen, task});
+                    }
                 }
             }
         }
-        // for (auto &occupy: occupies) {
-        //     printf("[%s, %s] occupies.\n", occupy.first->name.c_str(), occupy.second->name.c_str());
+
+        // Get scores
+        std::vector<Occupy> sorted;
+        for (auto &occupy: occupies) {
+            auto copied = occupy;
+            copied.calculate(peak_time_stamp, peak_memory, origin_time);
+            sorted.push_back(copied);
+        }
+        std::sort(sorted.begin(), sorted.end(), [](const Occupy &o1, const Occupy &o2) {
+            return o1.score < o2.score;
+        });
+
+        // Pruning
+        if (sorted.size() > OCCUPIES_LIMIT + RANDOM_LIMIT) {
+            // Randomly select some between [OCCUPIES_LIMIT, sorted.size())
+            auto random = Random(OCCUPIES_LIMIT, sorted.size());
+            for (int i = 0; i < RANDOM_LIMIT; ++ i) {
+                std::swap(sorted[OCCUPIES_LIMIT + i], sorted[random()]);
+            }
+            sorted.resize(OCCUPIES_LIMIT + RANDOM_LIMIT);
+            // Release unused memory
+            sorted.shrink_to_fit();
+        }
+
+        // Debug print
+        // for (auto &copied: sorted) {
+        //     printf("[%s (%p), %s] occupies, score=%.6lf.\n", copied.gen->name.c_str(),
+        //            copied.gen.get(), copied.use->name.c_str(), copied.score);
         // }
-        return std::vector<Occupy>(occupies.begin(), occupies.end());
+        return sorted;
     }
 
     static void refactor(TaskHandle &head) {
@@ -458,7 +561,7 @@ struct Schedule {
             analyzed = true;
             total_time = common->analyze_time(head);
             peak_memory = common->analyze_memory(head);
-            occupies = common->analyze_occupies(head, peak_memory);
+            occupies = common->analyze_occupies(head, peak_memory, total_time);
         }
         return std::make_pair(peak_memory, total_time);
     }

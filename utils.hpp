@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdarg>
 #include <cctype>
+#include <random>
 
 std::string pretty(size_t value, size_t scale, const char* *units, int m) {
     int count = 0;
@@ -114,4 +115,24 @@ public:
     }
 };
 
-#define LOOP(var, list_head) for(auto (var) = (list_head); (var); (var) = (var)->next)
+class Random {
+    std::default_random_engine engine;
+    std::uniform_int_distribution<int> dist;
+
+public:
+    // Random an int in [min, max)
+    Random(int min, int max, int seed=0) {
+        if (min >= max) {
+            error("Min value should be less than max.\n");
+        }
+        engine = std::default_random_engine(seed);
+        dist = std::uniform_int_distribution<int>(min, max - 1);
+    }
+
+    int operator () () {
+        return dist(engine);
+    }
+};
+
+#define LOOP(var, list_head) for (auto (var) = (list_head); (var); (var) = (var)->next)
+#define LOOP_BACK(var, list_tail) for (auto (var) = (list_tail); (var); (var) = (var)->prev)
