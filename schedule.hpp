@@ -38,6 +38,14 @@ struct Operand {
     }
 };
 
+struct Occupy {
+    TaskHandle gen, use;
+
+    bool operator < (const Occupy &another) const {
+        return gen == another.gen ? use < another.use : gen < another.gen;
+    }
+};
+
 struct OperandUsage {
     OperandHandle operand;
     TaskHandle gen, prev_use, next_use;
@@ -56,6 +64,8 @@ struct Task {
     TaskHandle prev, next;
 
     // Temporary uses
+    int time_stamp;
+    size_t execution_memory;
     std::vector<OperandHandle> to_dealloc_after;
 
     nlohmann::json toJson(std::map<OperandHandle, int> &operand_to_id) {
@@ -326,8 +336,8 @@ struct Common {
                     current_memory += usage.operand->size;
                 }
             }
-            size_t execution_memory = current_memory + task->workspace;
-            peak_memory = std::max(peak_memory, execution_memory);
+            task->execution_memory = current_memory + task->workspace;
+            peak_memory = std::max(peak_memory, task->execution_memory);
 
             for (auto &operand: task->to_dealloc_after) {
                 operand->on_device = false;
@@ -335,6 +345,33 @@ struct Common {
             }
         }
         return peak_memory;
+    }
+
+    static std::vector<Occupy> analyze_occupies(TaskHandle &head, size_t peak_memory) {
+        // Run this function after running analyze_topology and analyze_memory
+        // Mark tasks and get the peak one
+        int time_stamp = 0, peak_time_stamp = 0;
+        LOOP(task, head) {
+            task->time_stamp = ++ time_stamp;
+            if (task->execution_memory == peak_memory) {
+                peak_time_stamp = time_stamp;
+            }
+        }
+        assert(peak_time_stamp > 0);
+
+        // Get all occupying pairs
+        std::set<Occupy> occupies;
+        LOOP(task, head) {
+            for (auto &usage: task->ins) {
+                if (usage.gen and usage.gen->time_stamp < peak_time_stamp and peak_time_stamp < task->time_stamp) {
+                    occupies.insert(Occupy {usage.gen, task});
+                }
+            }
+        }
+        // for (auto &occupy: occupies) {
+        //     printf("[%s, %s] occupies.\n", occupy.first->name.c_str(), occupy.second->name.c_str());
+        // }
+        return std::vector<Occupy>(occupies.begin(), occupies.end());
     }
 
     static void refactor(TaskHandle &head) {
@@ -410,6 +447,7 @@ struct Schedule {
     bool analyzed = false;
     size_t peak_memory = 0;
     uint64_t total_time = 0;
+    std::vector<Occupy> occupies;
 
     // Hash
     bool hash_calculated = false;
@@ -420,6 +458,7 @@ struct Schedule {
             analyzed = true;
             total_time = common->analyze_time(head);
             peak_memory = common->analyze_memory(head);
+            occupies = common->analyze_occupies(head, peak_memory);
         }
         return std::make_pair(peak_memory, total_time);
     }
