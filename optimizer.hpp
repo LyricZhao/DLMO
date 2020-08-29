@@ -8,7 +8,7 @@
 #include "utils.hpp"
 
 class Optimizer {
-    static constexpr int QUEUE_SIZE_LIMIT = 120;
+    static constexpr int QUEUE_SIZE_LIMIT = 100;
     static constexpr int SEARCH_LIMIT = 1000;
 
     size_t limit;

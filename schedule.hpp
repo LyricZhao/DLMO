@@ -12,7 +12,6 @@
 #include "utils.hpp"
 
 // TODO: support .share operator
-// TODO: dead code elimination
 // TODO: inplace operators generation list
 
 struct Operand;
@@ -209,11 +208,25 @@ struct Occupy {
     static constexpr double TIME_FACTOR = 1 - MEMORY_FACTOR;
 
     TaskHandle gen, use;
+
+    bool move;
     double score;
 
     void calculate(int peak_time_stamp, size_t peak_memory, uint64_t origin_time) {
+        // Maybe dead code
+        move = true;
+        for (auto &usage: gen->outs) {
+            if (usage.next_use and usage.next_use->time_stamp < use->time_stamp) {
+                move = false;
+                break;
+            }
+        }
+        // if (move) {
+        //     printf("Dead code: %s\n", gen->name.c_str());
+        // }
+
         // Time increased
-        uint64_t time_increased = gen->duration;
+        uint64_t time_increased = move ? 0 : gen->duration;
 
         // Memory increased
         // Use `signed long long` instead of `size_t`
@@ -251,8 +264,8 @@ struct Common {
     std::set<OperandHandle> already_on;
     std::set<OperandHandle> not_dealloc;
 
-    static constexpr int OCCUPIES_LIMIT = 2;
-    static constexpr int RANDOM_LIMIT = 1;
+    static constexpr int OCCUPIES_LIMIT = 4;
+    static constexpr int RANDOM_LIMIT = 2;
 
     static CommonHandle fromJson(const nlohmann::json &json) {
         auto common = std::make_shared<Common>();
@@ -370,7 +383,9 @@ struct Common {
                 }
                 if (usage.gen) {
                     auto &gen_usage = usage.gen->find(usage.operand);
-                    gen_usage.next_use = task;
+                    if (not gen_usage.next_use) {
+                        gen_usage.next_use = task;
+                    }
                 }
             }
             for (auto &usage: task->outs) {
@@ -388,7 +403,6 @@ struct Common {
                     task->to_dealloc_after.push_back(usage.operand);
                 }
             }
-            // TODO: Code elimination
             for (auto &usage: task->outs) {
                 if (not usage.next_use and not not_dealloc.count(usage.operand)) {
                     task->to_dealloc_after.push_back(usage.operand);
@@ -626,7 +640,9 @@ struct Schedule {
             if (task == occupy.use) {
                 insert_back(occupy.gen->copy());
             }
-            insert_back(task->copy());
+            if (not (task == occupy.gen and occupy.move)) {
+                insert_back(task->copy());
+            }
         }
 
         return new_schedule;
