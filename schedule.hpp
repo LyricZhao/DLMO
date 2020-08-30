@@ -12,7 +12,7 @@
 #include "utils.hpp"
 
 // TODO: support .share operator
-// TODO: inplace operators generation list
+// TODO: inplace operators (append list)
 
 struct Operand;
 typedef std::shared_ptr<Operand> OperandHandle;
@@ -46,7 +46,7 @@ struct OperandUsage {
     OperandHandle operand;
 
     // Temporary uses
-    TaskHandle gen, prev_use, next_use, last_use;
+    TaskHandle gen, next_gen, prev_use, next_use, last_use;
 };
 
 struct Task {
@@ -111,10 +111,12 @@ struct Task {
         time_stamp = 0;
         execution_memory = 0;
         for (auto &usage: ins) {
-            usage.prev_use = usage.next_use = usage.gen = usage.last_use = nullptr;
+            usage.prev_use = usage.next_use = nullptr;
+            usage.next_gen = usage.gen = usage.last_use = nullptr;
         }
         for (auto &usage: outs) {
-            usage.prev_use = usage.next_use = usage.gen = usage.last_use = nullptr;
+            usage.prev_use = usage.next_use = nullptr;
+            usage.next_gen = usage.gen = usage.last_use = nullptr;
         }
         to_dealloc_after.clear();
     }
@@ -389,7 +391,6 @@ struct Common {
                 }
             }
             for (auto &usage: task->outs) {
-                // The generating task will not have next_use
                 usage.gen = gen[usage.operand] = task;
                 usage.prev_use = prev_use[usage.operand] = nullptr;
             }
@@ -409,6 +410,18 @@ struct Common {
                 }
             }
             tail = task;
+        }
+
+        // Analyze next generation
+        gen.clear();
+        LOOP_BACK(task, tail) {
+            for (auto &usage: task->outs) {
+                usage.next_gen = gen[usage.operand];
+                gen[usage.operand] = task;
+            }
+            for (auto &usage: task->ins) {
+                usage.next_gen = gen[usage.operand];
+            }
         }
 
         // Analyze last use
@@ -482,6 +495,19 @@ struct Common {
         }
         assert(peak_time_stamp > 0);
 
+        // Check
+        auto check = [](Occupy &occupy) -> bool {
+            auto &gen = occupy.gen;
+            auto &use = occupy.use;
+            for (auto &usage: gen->ins) {
+                if (usage.next_gen and usage.next_gen->time_stamp < use->time_stamp) {
+                    // warning("Something bad happened\n");
+                    return false;
+                }
+            }
+            return true;
+        };
+
         // Get all occupying pairs
         std::set<Occupy> occupies;
         LOOP(task, head) {
@@ -493,7 +519,7 @@ struct Common {
                 if (usage.gen and not usage.gen->inplace and usage.gen->time_stamp < peak_time_stamp) {
                     auto occupy = Occupy {usage.gen, task};
                     // .count is a must, because we only accept the first usage
-                    if (not occupies.count(occupy)) {
+                    if (not occupies.count(occupy) and check(occupy)) {
                         occupies.insert(Occupy {usage.gen, task});
                     }
                 }
