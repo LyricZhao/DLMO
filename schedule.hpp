@@ -12,7 +12,7 @@
 #include "utils.hpp"
 
 // TODO: support .share operator
-// TODO: inplace operators (append list)
+// TODO: support the occupies which do not pass the check (input maybe re-generate)
 
 struct Operand;
 typedef std::shared_ptr<Operand> OperandHandle;
@@ -515,11 +515,12 @@ struct Common {
                 continue;
             }
             for (auto &usage: task->ins) {
-                // TODO: consider inplace
-                if (usage.gen and not usage.gen->inplace and usage.gen->time_stamp < peak_time_stamp) {
+                if (usage.gen and usage.gen->time_stamp < peak_time_stamp) {
                     auto occupy = Occupy {usage.gen, task};
                     // .count is a must, because we only accept the first usage
+                    // TODO: consider the occupies which do not pass the check
                     if (not occupies.count(occupy) and check(occupy)) {
+                        assert(not usage.gen->inplace);
                         occupies.insert(Occupy {usage.gen, task});
                     }
                 }
@@ -674,7 +675,7 @@ struct Schedule {
         return new_schedule;
     }
 
-    static ScheduleHandle fromFile(const std::string &path) {
+    static std::pair<ScheduleHandle, int> fromFile(const std::string &path) {
         // Read JSON
         std::ifstream file(path);
         nlohmann::json json;
@@ -685,8 +686,10 @@ struct Schedule {
         schedule->common = Common::fromJson(json["operands"]);
 
         // Records
+        int count = 0;
         TaskHandle tail;
         for (auto &item: json["records"]) {
+            ++ count;
             auto task = Task::fromJson(schedule->common->operands, item);
             if (not tail) {
                 schedule->head = task;
@@ -713,7 +716,7 @@ struct Schedule {
         // }
         // schedule->common->refactor(schedule->head);
 
-        return schedule;
+        return std::make_pair(schedule, count);
     }
 
     void dumpToFile(const std::string &path, bool restore=true, bool not_change=true) {
