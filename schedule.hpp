@@ -46,6 +46,7 @@ struct OperandUsage {
     OperandHandle operand;
 
     // Temporary uses
+    size_t version;
     TaskHandle gen, next_gen, prev_use, next_use, last_use;
 };
 
@@ -67,7 +68,6 @@ struct Task {
     size_t execution_memory;
     std::vector<OperandHandle> to_dealloc_after;
 
-    // TODO: it's not efficient
     TaskHandle copy() const {
         auto new_task = std::make_shared<Task>();
         new_task->name = name;
@@ -111,10 +111,12 @@ struct Task {
         time_stamp = 0;
         execution_memory = 0;
         for (auto &usage: ins) {
+            usage.version = usage.operand->id;
             usage.prev_use = usage.next_use = nullptr;
             usage.next_gen = usage.gen = usage.last_use = nullptr;
         }
         for (auto &usage: outs) {
+            usage.version = usage.operand->id;
             usage.prev_use = usage.next_use = nullptr;
             usage.next_gen = usage.gen = usage.last_use = nullptr;
         }
@@ -198,7 +200,6 @@ struct Task {
             }
         }
 
-        // TODO: JSON file has .host2device-like operators
         assert(not task->isForbidden());
         return task;
     }
@@ -372,12 +373,11 @@ struct Common {
         std::map<OperandHandle, TaskHandle> gen;
         LOOP(task, head) {
             assert(not task->isDealloc());
-            // TODO: check no duplicate ins/outs
+            size_t version = 0;
             for (auto &usage: task->ins) {
                 usage.gen = gen[usage.operand];
                 usage.prev_use = prev_use[usage.operand];
                 prev_use[usage.operand] = task;
-                // TODO: the operation is time consuming
                 // Set the previous' next to current task
                 if (usage.prev_use) {
                     auto &prev_usage = usage.prev_use->find(usage.operand, false);
@@ -385,12 +385,15 @@ struct Common {
                 }
                 if (usage.gen) {
                     auto &gen_usage = usage.gen->find(usage.operand);
+                    usage.version = gen_usage.version;
                     if (not gen_usage.next_use) {
                         gen_usage.next_use = task;
                     }
                 }
+                version = version * 131ull + usage.version;
             }
             for (auto &usage: task->outs) {
+                usage.version = version * 131ull + usage.operand->id;
                 usage.gen = gen[usage.operand] = task;
                 usage.prev_use = prev_use[usage.operand] = nullptr;
             }
@@ -499,10 +502,26 @@ struct Common {
         auto check = [](Occupy &occupy) -> bool {
             auto &gen = occupy.gen;
             auto &use = occupy.use;
+            // We're going to put `gen` before `use`, so we must ensure the inputs of `gen` will not change
             for (auto &usage: gen->ins) {
-                if (usage.next_gen and usage.next_gen->time_stamp < use->time_stamp) {
-                    // warning("Something bad happened\n");
-                    return false;
+                auto last_gen_before_re_gen = usage.next_gen;
+                while (last_gen_before_re_gen) {
+                    auto &re_gen = last_gen_before_re_gen->find(usage.operand);
+                    if (re_gen.next_gen and re_gen.next_gen->time_stamp < use->time_stamp) {
+                        last_gen_before_re_gen = re_gen.next_gen;
+                    } else {
+                        break;
+                    }
+                }
+                if (last_gen_before_re_gen and last_gen_before_re_gen->time_stamp < use->time_stamp) {
+                    auto &re_gen = last_gen_before_re_gen->find(usage.operand);
+                    auto &in_usage = gen->find(usage.operand, false);
+                    // printf("gen (%d): %s, use (%d): %s, re_gen (%d): %s, %d, %zu, %zu\n", gen->time_stamp, gen->name.c_str(),
+                    //        use->time_stamp, use->name.c_str(), last_gen_before_re_gen->time_stamp, last_gen_before_re_gen->name.c_str(),
+                    //        usage.operand->id, re_gen.version, in_usage.version);
+                    if (re_gen.version != in_usage.version) {
+                        return false;
+                    }
                 }
             }
             return true;

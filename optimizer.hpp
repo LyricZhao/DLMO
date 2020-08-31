@@ -74,7 +74,7 @@ public:
             for (auto &substitution: substitutions) {
                 if (queue.size() == QUEUE_SIZE_LIMIT) {
                     if (first_warning) {
-                        warning("Reaching searching queue size limit %d\n", QUEUE_SIZE_LIMIT);
+                        printf(" > Reaching searching queue size limit %d\n", QUEUE_SIZE_LIMIT);
                         first_warning = false;
                     }
                     break;
