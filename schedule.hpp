@@ -210,15 +210,17 @@ struct Task {
 
 struct Occupy {
     // It's different with comparator
-    static constexpr double MEMORY_FACTOR = 0.5;
-    static constexpr double TIME_FACTOR = 1 - MEMORY_FACTOR;
+    static constexpr double O1_MEMORY_FACTOR = 0.2;
+    static constexpr double O1_TIME_FACTOR = 1 - O1_MEMORY_FACTOR;
+    static constexpr double O2_MEMORY_FACTOR = 0.8;
+    static constexpr double O2_TIME_FACTOR = 1 - O2_MEMORY_FACTOR;
 
     TaskHandle gen, use;
     std::vector<TaskHandle> re_gen;
     std::set<OperandUsage> re_gen_ins;
 
     bool move;
-    double score;
+    double score1, score2;
 
     void calculate(int peak_time_stamp, size_t peak_memory, uint64_t origin_time) {
         // Maybe dead code
@@ -254,8 +256,10 @@ struct Occupy {
         }
 
         // Calculate score, lower is better
-        score = static_cast<double>(memory_increased) / peak_memory * MEMORY_FACTOR;
-        score += static_cast<double>(time_increased) / origin_time * TIME_FACTOR;
+        score1 = static_cast<double>(memory_increased) / peak_memory * O1_MEMORY_FACTOR;
+        score1 += static_cast<double>(time_increased) / origin_time * O1_TIME_FACTOR;
+        score2 = static_cast<double>(memory_increased) / peak_memory * O2_MEMORY_FACTOR;
+        score2 += static_cast<double>(time_increased) / origin_time * O2_TIME_FACTOR;
         // size_t signed_memory = memory_increased > 0 ? memory_increased : -memory_increased;
         // printf("[%s, %s] memory: %c%s, time: %s, score=%.6lf\n", gen->name.c_str(), use->name.c_str(),
         //        memory_increased > 0 ? '+' : '-', prettyBytes(signed_memory).c_str(),
@@ -273,7 +277,8 @@ struct Common {
     std::set<OperandHandle> already_on;
     std::set<OperandHandle> not_dealloc;
 
-    static constexpr int OCCUPIES_LIMIT = 2;
+    static constexpr int O1_OCCUPIES_LIMIT = 2;
+    static constexpr int O2_OCCUPIES_LIMIT = 2;
     static constexpr int RANDOM_LIMIT = 2;
 
     static CommonHandle fromJson(const nlohmann::json &json) {
@@ -576,7 +581,6 @@ struct Common {
                 if (usage.gen and usage.gen->time_stamp < peak_time_stamp) {
                     auto occupy = Occupy {usage.gen, task};
                     // .count is a must, because we only accept the first usage
-                    // TODO: consider the occupies which do not pass the check
                     if (not occupies.count(occupy) and append(occupy)) {
                         occupies.insert(occupy);
                     }
@@ -585,26 +589,36 @@ struct Common {
         }
 
         // Get scores
-        std::vector<Occupy> essentials;
+        std::vector<Occupy> occupies_vec;
         for (auto &occupy: occupies) {
             auto copied = occupy;
             copied.calculate(peak_time_stamp, peak_memory, origin_time);
-            essentials.push_back(copied);
+            occupies_vec.push_back(copied);
         }
-        std::sort(essentials.begin(), essentials.end(), [](const Occupy &o1, const Occupy &o2) {
-            return o1.score < o2.score;
-        });
 
-        // Pruning
-        if (essentials.size() > OCCUPIES_LIMIT + RANDOM_LIMIT) {
-            // Randomly select some between [OCCUPIES_LIMIT, sorted.size())
-            auto random = Random(OCCUPIES_LIMIT, essentials.size());
+        // O1 Pruning
+        std::set<Occupy> essentials;
+        std::sort(occupies_vec.begin(), occupies_vec.end(), [](const Occupy &o1, const Occupy &o2) {
+            return o1.score1 < o2.score1;
+        });
+        for (int i = 0; i < O1_OCCUPIES_LIMIT; ++ i) {
+            essentials.insert(occupies_vec[i]);
+        }
+
+        // O2 Pruning
+        std::sort(occupies_vec.begin(), occupies_vec.end(), [](const Occupy &o1, const Occupy &o2) {
+            return o1.score2 < o2.score2;
+        });
+        for (int i = 0; i < O2_OCCUPIES_LIMIT; ++ i) {
+            essentials.insert(occupies_vec[i]);
+        }
+
+        // Random
+        if (not occupies_vec.empty()) {
+            auto random = Random(0, occupies_vec.size());
             for (int i = 0; i < RANDOM_LIMIT; ++ i) {
-                std::swap(essentials[OCCUPIES_LIMIT + i], essentials[random()]);
+                essentials.insert(occupies_vec[random()]);
             }
-            essentials.resize(OCCUPIES_LIMIT + RANDOM_LIMIT);
-            // Release unused memory
-            essentials.shrink_to_fit();
         }
 
         // Debug print
@@ -612,7 +626,7 @@ struct Common {
         //     printf("[%s (%p), %s] occupies, score=%.6lf.\n", copied.gen->name.c_str(),
         //            copied.gen.get(), copied.use->name.c_str(), copied.score);
         // }
-        return essentials;
+        return std::vector<Occupy>(essentials.begin(), essentials.end());
     }
 
     static void refactor(TaskHandle &head) {
@@ -826,7 +840,7 @@ struct Comparator {
 
     static constexpr double MEMORY_FACTOR = 0.5;
     static constexpr double TIME_FACTOR = 1 - MEMORY_FACTOR;
-    static constexpr double RECONSIDER_RATIO = 1.2;
+    static constexpr double RECONSIDER_RATIO = 2;
     static constexpr double TIME_REQUIREMENT_RATIO = 1.01;
 
     double score(const ScheduleHandle &s) const {
@@ -842,10 +856,14 @@ struct Comparator {
 
     bool operator () (const ScheduleHandle &s1, const ScheduleHandle &s2) const {
         // Whether reaching limit
-        size_t s1_peak_memory = s1->analyze().first;
-        size_t s2_peak_memory = s2->analyze().first;
+        size_t s1_peak_memory, s2_peak_memory;
+        uint64_t s1_total_time, s2_total_time;
+        std::tie(s1_peak_memory, s1_total_time) = s1->analyze();
+        std::tie(s2_peak_memory, s2_total_time) = s2->analyze();
         if ((s1_peak_memory <= limit) != (s2_peak_memory <= limit)) {
             return s2_peak_memory <= limit;
+        } else if (s1_peak_memory <= limit) {
+            return s1_total_time > s2_total_time;
         }
 
         // Compare both time and memory

@@ -8,7 +8,6 @@
 #include "utils.hpp"
 
 class Optimizer {
-    static constexpr int QUEUE_SIZE_LIMIT = 40;
     static constexpr int SEARCH_LIMIT = 1000;
 
     size_t limit;
@@ -55,27 +54,26 @@ public:
         ScheduleHandle best = origin;
         auto comparator = Comparator{origin->analyze().second, limit};
         std::set<size_t> hash_set;
-        std::set<ScheduleHandle, Comparator> queue(comparator);
+        std::priority_queue<ScheduleHandle, std::vector<ScheduleHandle>, Comparator> queue(comparator);
 
         // Source
-        queue.insert(origin);
+        queue.push(origin);
         hash_set.insert(origin->hash());
 
         // Back-tracing search
         printf(" > Start back-tracing search from source (%s)\n", origin->info().c_str());
         Timer timer;
         int count = 0;
-        bool first_warning = true;
         while (not queue.empty()) {
-            auto top = *queue.rbegin();
-            queue.erase(top);
+            auto top = queue.top();
+            queue.pop();
 
             if (not comparator.considerable(best, top)) {
                 continue;
             }
 
             ++ count;
-            // printf(" > Progress: %s, %s\n", prettyBytes(top->peak_memory).c_str(), prettyNanoseconds(top->total_time).c_str());
+            printf(" > Progress: %s, %s\n", prettyBytes(top->peak_memory).c_str(), prettyNanoseconds(top->total_time).c_str());
 
             // Substitute
             std::vector<ScheduleHandle> substitutions = generateSubstitutions(top);
@@ -86,21 +84,11 @@ public:
                     continue;
                 }
                 if (comparator.considerable(best, substitution)) {
-                    queue.insert(substitution);
+                    queue.push(substitution);
                     hash_set.insert(substitution->hash());
                 }
                 if (comparator(best, substitution)) {
                     best = substitution;
-                }
-            }
-
-            if (queue.size() > QUEUE_SIZE_LIMIT) {
-                if (first_warning) {
-                    printf(" > Reaching searching queue size limit %d\n", QUEUE_SIZE_LIMIT);
-                    first_warning = false;
-                    while (queue.size() > QUEUE_SIZE_LIMIT) {
-                        queue.erase(*queue.begin());
-                    }
                 }
             }
 
