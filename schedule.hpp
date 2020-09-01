@@ -12,7 +12,6 @@
 #include "utils.hpp"
 
 // TODO: support .share operator
-// TODO: support the occupies which do not pass the check (input maybe re-generate)
 
 struct Operand;
 typedef std::shared_ptr<Operand> OperandHandle;
@@ -46,8 +45,12 @@ struct OperandUsage {
     OperandHandle operand;
 
     // Temporary uses
-    size_t version;
+    size_t version = 0;
     TaskHandle gen, next_gen, prev_use, next_use, last_use;
+
+    bool operator < (const OperandUsage &another) const {
+        return operand < another.operand;
+    }
 };
 
 struct Task {
@@ -211,6 +214,8 @@ struct Occupy {
     static constexpr double TIME_FACTOR = 1 - MEMORY_FACTOR;
 
     TaskHandle gen, use;
+    std::vector<TaskHandle> re_gen;
+    std::set<OperandUsage> re_gen_ins;
 
     bool move;
     double score;
@@ -224,24 +229,25 @@ struct Occupy {
                 break;
             }
         }
-        // if (move) {
-        //     printf("Dead code: %s\n", gen->name.c_str());
-        // }
 
         // Time increased
         uint64_t time_increased = move ? 0 : gen->duration;
+        for (auto &task: re_gen) {
+            time_increased += task->duration;
+        }
 
         // Memory increased
         // Use `signed long long` instead of `size_t`
         long long memory_increased = 0;
         // Prolong dealloc time (memory increased)
-        for (auto &usage: gen->ins) {
+        for (auto &usage: re_gen_ins) {
             if ((not usage.last_use or usage.last_use->time_stamp < peak_time_stamp) and (not gen->contains(usage.operand))) {
                 memory_increased += usage.operand->size;
             }
         }
         // Re-computation (memory decreased)
         for (auto &usage: use->ins) {
+            // TODO: simplify
             if (gen->contains(usage.operand) and (not usage.prev_use or usage.prev_use->time_stamp < peak_time_stamp)) {
                 memory_increased -= usage.operand->size;
             }
@@ -267,7 +273,7 @@ struct Common {
     std::set<OperandHandle> already_on;
     std::set<OperandHandle> not_dealloc;
 
-    static constexpr int OCCUPIES_LIMIT = 4;
+    static constexpr int OCCUPIES_LIMIT = 2;
     static constexpr int RANDOM_LIMIT = 2;
 
     static CommonHandle fromJson(const nlohmann::json &json) {
@@ -499,32 +505,65 @@ struct Common {
         assert(peak_time_stamp > 0);
 
         // Check
-        auto check = [](Occupy &occupy) -> bool {
+        auto append = [](Occupy &occupy) -> bool {
             auto &gen = occupy.gen;
             auto &use = occupy.use;
+            occupy.re_gen_ins.insert(gen->ins.begin(), gen->ins.end());
+
             // We're going to put `gen` before `use`, so we must ensure the inputs of `gen` will not change
-            for (auto &usage: gen->ins) {
-                auto last_gen_before_re_gen = usage.next_gen;
-                while (last_gen_before_re_gen) {
-                    auto &re_gen = last_gen_before_re_gen->find(usage.operand);
-                    if (re_gen.next_gen and re_gen.next_gen->time_stamp < use->time_stamp) {
-                        last_gen_before_re_gen = re_gen.next_gen;
-                    } else {
-                        break;
+            // printf("Begin appending\n");
+            static constexpr int RE_GEN_TASK_LIMIT = 3;
+            for (int i = -1; i < RE_GEN_TASK_LIMIT; ++ i) {
+                bool found = false;
+                OperandUsage bad_usage;
+                // printf("Loop: %d\n", i);
+                for (auto &usage: occupy.re_gen_ins) {
+                    auto last_gen_before_re_gen = usage.next_gen;
+                    while (last_gen_before_re_gen) {
+                        auto &re_gen = last_gen_before_re_gen->find(usage.operand);
+                        if (re_gen.next_gen and re_gen.next_gen->time_stamp < use->time_stamp) {
+                            last_gen_before_re_gen = re_gen.next_gen;
+                        } else {
+                            break;
+                        }
+                    }
+                    if (last_gen_before_re_gen and last_gen_before_re_gen->time_stamp < use->time_stamp) {
+                        auto &re_gen = last_gen_before_re_gen->find(usage.operand);
+                        if (re_gen.version != usage.version) {
+                            found = true;
+                            bad_usage = usage;
+                            break;
+                        }
                     }
                 }
-                if (last_gen_before_re_gen and last_gen_before_re_gen->time_stamp < use->time_stamp) {
-                    auto &re_gen = last_gen_before_re_gen->find(usage.operand);
-                    auto &in_usage = gen->find(usage.operand, false);
-                    // printf("gen (%d): %s, use (%d): %s, re_gen (%d): %s, %d, %zu, %zu\n", gen->time_stamp, gen->name.c_str(),
-                    //        use->time_stamp, use->name.c_str(), last_gen_before_re_gen->time_stamp, last_gen_before_re_gen->name.c_str(),
-                    //        usage.operand->id, re_gen.version, in_usage.version);
-                    if (re_gen.version != in_usage.version) {
-                        return false;
-                    }
+                if (found) {
+                    // printf("Bad point (erase): %d %p\n", bad_usage.operand->id, bad_usage.gen.get());
+                    occupy.re_gen.push_back(bad_usage.gen);
+                    // printf("Pushing %s\n", bad_usage.gen->name.c_str());
+                    // printf("Before:\n");
+                    // for (auto &de: occupy.re_gen_ins) {
+                    //     printf(" > %d\n", de.operand->id);
+                    // }
+                    occupy.re_gen_ins.erase(bad_usage);
+                    // printf("After:\n");
+                    // for (auto &de: occupy.re_gen_ins) {
+                    //     printf(" > %d\n", de.operand->id);
+                    // }
+                    occupy.re_gen_ins.insert(bad_usage.gen->ins.begin(), bad_usage.gen->ins.end());
+                    // for (auto &de: bad_usage.gen->ins) {
+                    //     // occupy.re_gen_ins.insert(de);
+                    //     printf("> Insert: %d@%s\n", de.operand->id, bad_usage.gen->name.c_str());
+                    // }
+                    // printf("After 2:\n");
+                    // for (auto &de: occupy.re_gen_ins) {
+                    //     printf(" > %d\n", de.operand->id);
+                    // }
+                } else {
+                    return true;
                 }
             }
-            return true;
+            // printf("gen: %s\n", gen->name.c_str());
+            return false;
         };
 
         // Get all occupying pairs
@@ -538,9 +577,8 @@ struct Common {
                     auto occupy = Occupy {usage.gen, task};
                     // .count is a must, because we only accept the first usage
                     // TODO: consider the occupies which do not pass the check
-                    if (not occupies.count(occupy) and check(occupy)) {
-                        assert(not usage.gen->inplace);
-                        occupies.insert(Occupy {usage.gen, task});
+                    if (not occupies.count(occupy) and append(occupy)) {
+                        occupies.insert(occupy);
                     }
                 }
             }
@@ -684,6 +722,9 @@ struct Schedule {
         };
         LOOP(task, head) {
             if (task == occupy.use) {
+                for (auto it = occupy.re_gen.rbegin(); it != occupy.re_gen.rend(); ++ it) {
+                    insert_back((*it)->copy());
+                }
                 insert_back(occupy.gen->copy());
             }
             if (not (task == occupy.gen and occupy.move)) {
@@ -783,9 +824,9 @@ struct Comparator {
     uint64_t origin_time;
     size_t limit;
 
-    static constexpr double MEMORY_FACTOR = 0.8;
+    static constexpr double MEMORY_FACTOR = 0.5;
     static constexpr double TIME_FACTOR = 1 - MEMORY_FACTOR;
-    static constexpr double RECONSIDER_RATIO = 2;
+    static constexpr double RECONSIDER_RATIO = 1.2;
     static constexpr double TIME_REQUIREMENT_RATIO = 1.01;
 
     double score(const ScheduleHandle &s) const {
