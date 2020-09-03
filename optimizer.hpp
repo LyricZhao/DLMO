@@ -8,7 +8,7 @@
 #include "utils.hpp"
 
 class Optimizer {
-    static constexpr int SEARCH_LIMIT = 5000;
+    static constexpr int SEARCH_LIMIT = 2000;
 
     size_t limit;
 
@@ -26,13 +26,13 @@ public:
         schedule->analyze();
 
         // Re-generate graph
-        printf(" @ Generating substitutions (count: %zu, peak: %s, time: %s) ...\n", schedule->occupies.size(),
-               prettyBytes(schedule->peak_memory).c_str(), prettyNanoseconds(schedule->total_time).c_str());
+        // printf(" @ Generating substitutions (count: %zu, peak: %s, time: %s) ...\n", schedule->occupies.size(),
+        //        prettyBytes(schedule->peak_memory).c_str(), prettyNanoseconds(schedule->total_time).c_str());
         std::vector<ScheduleHandle> substitutions;
         for (auto &occupy: schedule->occupies) {
-            printf("   @ [%s, %s] occupies (score1=%.6lf, score2=%.6lf)\n", occupy.gen->name.c_str(),
-                   occupy.use->name.c_str(), occupy.score1, occupy.score2);
-            printf("   @ Moving: %d\n", occupy.move);
+            // printf("   @ [%s, %s] occupies (score1=%.6lf, score2=%.6lf)\n", occupy.gen->name.c_str(),
+            //        occupy.use->name.c_str(), occupy.score1, occupy.score2);
+            // printf("   @ Moving: %d\n", occupy.move);
             // for (auto &usage: occupy.gen->ins) {
             //     printf("     @ In: %d\n", usage.operand->id);
             // }
@@ -45,8 +45,8 @@ public:
             auto new_schedule = schedule->apply(occupy);
             substitutions.push_back(new_schedule);
             new_schedule->analyze();
-            printf("   @ Optimized to (peak: %s, memory: %s)\n", prettyBytes(new_schedule->peak_memory).c_str(),
-                   prettyNanoseconds(new_schedule->total_time).c_str());
+            // printf("   @ Optimized to (peak: %s, memory: %s)\n", prettyBytes(new_schedule->peak_memory).c_str(),
+            //        prettyNanoseconds(new_schedule->total_time).c_str());
         }
         return substitutions;
     };
