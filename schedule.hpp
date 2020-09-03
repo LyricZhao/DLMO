@@ -260,10 +260,6 @@ struct Occupy {
         score1 += static_cast<double>(time_increased) / origin_time * O1_TIME_FACTOR;
         score2 = static_cast<double>(memory_increased) / peak_memory * O2_MEMORY_FACTOR;
         score2 += static_cast<double>(time_increased) / origin_time * O2_TIME_FACTOR;
-        // size_t signed_memory = memory_increased > 0 ? memory_increased : -memory_increased;
-        // printf("[%s, %s] memory: %c%s, time: %s, score=%.6lf\n", gen->name.c_str(), use->name.c_str(),
-        //        memory_increased > 0 ? '+' : '-', prettyBytes(signed_memory).c_str(),
-        //        prettyNanoseconds(time_increased).c_str(), score);
     }
 
     bool operator < (const Occupy &another) const {
@@ -487,7 +483,6 @@ struct Common {
             }
             task->execution_memory = current_memory + task->workspace;
             peak_memory = std::max(peak_memory, task->execution_memory);
-            // printf("@%s: %s\n", task->name.c_str(), prettyBytes(task->execution_memory).c_str());
 
             for (auto &operand: task->to_dealloc_after) {
                 operand->on_device = false;
@@ -516,12 +511,10 @@ struct Common {
             occupy.re_gen_ins.insert(gen->ins.begin(), gen->ins.end());
 
             // We're going to put `gen` before `use`, so we must ensure the inputs of `gen` will not change
-            // printf("Begin appending\n");
             static constexpr int RE_GEN_TASK_LIMIT = 3;
             for (int i = -1; i < RE_GEN_TASK_LIMIT; ++ i) {
                 bool found = false;
                 OperandUsage bad_usage;
-                // printf("Loop: %d\n", i);
                 for (auto &usage: occupy.re_gen_ins) {
                     auto last_gen_before_re_gen = usage.next_gen;
                     while (last_gen_before_re_gen) {
@@ -542,32 +535,13 @@ struct Common {
                     }
                 }
                 if (found) {
-                    // printf("Bad point (erase): %d %p\n", bad_usage.operand->id, bad_usage.gen.get());
                     occupy.re_gen.push_back(bad_usage.gen);
-                    // printf("Pushing %s\n", bad_usage.gen->name.c_str());
-                    // printf("Before:\n");
-                    // for (auto &de: occupy.re_gen_ins) {
-                    //     printf(" > %d\n", de.operand->id);
-                    // }
                     occupy.re_gen_ins.erase(bad_usage);
-                    // printf("After:\n");
-                    // for (auto &de: occupy.re_gen_ins) {
-                    //     printf(" > %d\n", de.operand->id);
-                    // }
                     occupy.re_gen_ins.insert(bad_usage.gen->ins.begin(), bad_usage.gen->ins.end());
-                    // for (auto &de: bad_usage.gen->ins) {
-                    //     // occupy.re_gen_ins.insert(de);
-                    //     printf("> Insert: %d@%s\n", de.operand->id, bad_usage.gen->name.c_str());
-                    // }
-                    // printf("After 2:\n");
-                    // for (auto &de: occupy.re_gen_ins) {
-                    //     printf(" > %d\n", de.operand->id);
-                    // }
                 } else {
                     return true;
                 }
             }
-            // printf("gen: %s\n", gen->name.c_str());
             return false;
         };
 
@@ -601,7 +575,8 @@ struct Common {
         std::sort(occupies_vec.begin(), occupies_vec.end(), [](const Occupy &o1, const Occupy &o2) {
             return o1.score1 < o2.score1;
         });
-        for (int i = 0, end = std::min<int>(O1_OCCUPIES_LIMIT, occupies_vec.size()); i < end; ++ i) {
+        int size = occupies_vec.size();
+        for (int i = 0; i < size and i < O1_OCCUPIES_LIMIT; ++ i) {
             essentials.insert(occupies_vec[i]);
         }
 
@@ -609,23 +584,18 @@ struct Common {
         std::sort(occupies_vec.begin(), occupies_vec.end(), [](const Occupy &o1, const Occupy &o2) {
             return o1.score2 < o2.score2;
         });
-        for (int i = 0, end = std::min<int>(O2_OCCUPIES_LIMIT, occupies_vec.size()); i < end; ++ i) {
+        for (int i = 0; i < size and i < O2_OCCUPIES_LIMIT; ++ i) {
             essentials.insert(occupies_vec[i]);
         }
 
         // Random
         if (not occupies_vec.empty()) {
             auto random = Random(0, occupies_vec.size());
-            for (int i = 0, end = std::min<int>(RANDOM_LIMIT, occupies_vec.size()); i < end; ++ i) {
+            for (int i = 0; i < size and i < RANDOM_LIMIT; ++ i) {
                 essentials.insert(occupies_vec[random()]);
             }
         }
 
-        // Debug print
-        // for (auto &copied: essentials) {
-        //     printf("[%s (%p), %s] occupies, score=%.6lf.\n", copied.gen->name.c_str(),
-        //            copied.gen.get(), copied.use->name.c_str(), copied.score);
-        // }
         return std::vector<Occupy>(essentials.begin(), essentials.end());
     }
 
