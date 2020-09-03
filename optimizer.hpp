@@ -8,7 +8,7 @@
 #include "utils.hpp"
 
 class Optimizer {
-    static constexpr int SEARCH_LIMIT = 1000;
+    static constexpr int SEARCH_LIMIT = 5000;
 
     size_t limit;
 

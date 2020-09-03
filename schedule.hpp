@@ -601,7 +601,7 @@ struct Common {
         std::sort(occupies_vec.begin(), occupies_vec.end(), [](const Occupy &o1, const Occupy &o2) {
             return o1.score1 < o2.score1;
         });
-        for (int i = 0; i < O1_OCCUPIES_LIMIT; ++ i) {
+        for (int i = 0, end = std::min<int>(O1_OCCUPIES_LIMIT, occupies_vec.size()); i < end; ++ i) {
             essentials.insert(occupies_vec[i]);
         }
 
@@ -609,14 +609,14 @@ struct Common {
         std::sort(occupies_vec.begin(), occupies_vec.end(), [](const Occupy &o1, const Occupy &o2) {
             return o1.score2 < o2.score2;
         });
-        for (int i = 0; i < O2_OCCUPIES_LIMIT; ++ i) {
+        for (int i = 0, end = std::min<int>(O2_OCCUPIES_LIMIT, occupies_vec.size()); i < end; ++ i) {
             essentials.insert(occupies_vec[i]);
         }
 
         // Random
         if (not occupies_vec.empty()) {
             auto random = Random(0, occupies_vec.size());
-            for (int i = 0; i < RANDOM_LIMIT; ++ i) {
+            for (int i = 0, end = std::min<int>(RANDOM_LIMIT, occupies_vec.size()); i < end; ++ i) {
                 essentials.insert(occupies_vec[random()]);
             }
         }
