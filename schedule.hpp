@@ -211,9 +211,9 @@ struct Task {
 struct Occupy {
     // It's different with comparator
     static constexpr double O1_MEMORY_FACTOR = 0.2;
-    static constexpr double O1_TIME_FACTOR = 1 - O1_MEMORY_FACTOR;
+    static constexpr double O1_TIME_FACTOR = 1.0 - O1_MEMORY_FACTOR;
     static constexpr double O2_MEMORY_FACTOR = 0.8;
-    static constexpr double O2_TIME_FACTOR = 1 - O2_MEMORY_FACTOR;
+    static constexpr double O2_TIME_FACTOR = 1.0 - O2_MEMORY_FACTOR;
 
     TaskHandle gen, use;
     std::vector<TaskHandle> re_gen;
@@ -275,7 +275,7 @@ struct Common {
 
     static constexpr int O1_OCCUPIES_LIMIT = 2;
     static constexpr int O2_OCCUPIES_LIMIT = 2;
-    static constexpr int RANDOM_LIMIT = 2;
+    static constexpr int TIMES_PER_RANDOM = 3;
 
     static CommonHandle fromJson(const nlohmann::json &json) {
         auto common = std::make_shared<Common>();
@@ -577,6 +577,7 @@ struct Common {
         });
         int size = occupies_vec.size();
         for (int i = 0; i < size and i < O1_OCCUPIES_LIMIT; ++ i) {
+            // printf(" > s1: %.3lf s2: %.3lf\n", occupies_vec[i].score1, occupies_vec[i].score2);
             essentials.insert(occupies_vec[i]);
         }
 
@@ -585,15 +586,15 @@ struct Common {
             return o1.score2 < o2.score2;
         });
         for (int i = 0; i < size and i < O2_OCCUPIES_LIMIT; ++ i) {
+            // printf(" > s1: %.3lf s2: %.3lf\n", occupies_vec[i].score1, occupies_vec[i].score2);
             essentials.insert(occupies_vec[i]);
         }
 
         // Random
-        if (not occupies_vec.empty()) {
-            auto random = Random(0, occupies_vec.size());
-            for (int i = 0; i < size and i < RANDOM_LIMIT; ++ i) {
-                essentials.insert(occupies_vec[random()]);
-            }
+        auto random = Random(0, TIMES_PER_RANDOM);
+        if (not occupies_vec.empty() and random() == 0) {
+            auto pos = Random(0, size)();
+            essentials.insert(occupies_vec[pos]);
         }
 
         return std::vector<Occupy>(essentials.begin(), essentials.end());
@@ -809,7 +810,7 @@ struct Comparator {
     size_t limit;
 
     static constexpr double MEMORY_FACTOR = 0.5;
-    static constexpr double TIME_FACTOR = 1 - MEMORY_FACTOR;
+    static constexpr double TIME_FACTOR = 1.0 - MEMORY_FACTOR;
     static constexpr double RECONSIDER_RATIO = 2;
     static constexpr double TIME_REQUIREMENT_RATIO = 1.01;
 

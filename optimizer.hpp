@@ -8,7 +8,7 @@
 #include "utils.hpp"
 
 class Optimizer {
-    static constexpr int SEARCH_LIMIT = 2000;
+    static constexpr int SEARCH_LIMIT = 1000;
 
     size_t limit;
 
@@ -45,8 +45,8 @@ public:
             auto new_schedule = schedule->apply(occupy);
             substitutions.push_back(new_schedule);
             new_schedule->analyze();
-            // printf("   @ Optimized to (peak: %s, memory: %s)\n", prettyBytes(new_schedule->peak_memory).c_str(),
-            //        prettyNanoseconds(new_schedule->total_time).c_str());
+            // printf("   @ Optimized to (peak: %s, memory: %s, s1: %.3lf, s2: %.3lf)\n", prettyBytes(new_schedule->peak_memory).c_str(),
+            //        prettyNanoseconds(new_schedule->total_time).c_str(), occupy.score1, occupy.score2);
         }
         return substitutions;
     };
@@ -74,7 +74,7 @@ public:
             }
 
             ++ count;
-            printf(" > Progress: %s, %s\n", prettyBytes(top->peak_memory).c_str(), prettyNanoseconds(top->total_time).c_str());
+            printf(" > Progress (%d): %s, %s\n", count, prettyBytes(top->peak_memory).c_str(), prettyNanoseconds(top->total_time).c_str());
 
             // Substitute
             std::vector<ScheduleHandle> substitutions = generateSubstitutions(top);
