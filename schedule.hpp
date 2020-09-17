@@ -55,11 +55,10 @@ struct OperandUsage {
 
 struct Task {
     // Can not be shared by other schedules
+    int id;
     std::string name = "none";
     size_t workspace = 0;
     std::vector<OperandUsage> ins, outs;
-    bool hash_calculated = false;
-    size_t hash_value = 0;
     uint64_t duration = 0;
     bool inplace = false;
 
@@ -77,8 +76,7 @@ struct Task {
         new_task->workspace = workspace;
         new_task->ins = ins;
         new_task->outs = outs;
-        new_task->hash_calculated = hash_calculated;
-        new_task->hash_value = hash_value;
+        new_task->id = id;
         new_task->duration = duration;
         new_task->inplace = inplace;
         return new_task;
@@ -148,23 +146,6 @@ struct Task {
         return outs[0];
     }
 
-    size_t hash() {
-        if (hash_calculated) {
-            return hash_value;
-        }
-        hash_calculated = true;
-        hash_value = std::hash<std::string>()(name);
-        hash_value = hash_value * 131ull + workspace;
-        // Pointer as hash
-        for (auto &usage: ins) {
-            hash_value = hash_value * 131ull + reinterpret_cast<size_t>(usage.operand.get());
-        }
-        for (auto &usage: outs) {
-            hash_value = hash_value * 131ull + reinterpret_cast<size_t>(usage.operand.get());
-        }
-        return hash_value;
-    }
-
     bool isDealloc() const {
         return name == ".dealloc";
     }
@@ -173,7 +154,7 @@ struct Task {
         return name == ".host2device" or name == ".device2host" or name == ".sync" or name == ".alloc";
     }
 
-    static TaskHandle fromJson(const std::vector<OperandHandle> &operands, const nlohmann::json &json) {
+    static TaskHandle fromJson(int id, const std::vector<OperandHandle> &operands, const nlohmann::json &json) {
         auto task = std::make_shared<Task>();
         auto fill = [operands](std::vector<OperandUsage> &vec, const nlohmann::json &array) {
             vec.resize(array.size());
@@ -184,6 +165,7 @@ struct Task {
         };
 
         // Fill task
+        task->id = id;
         task->name = json[0];
         fill(task->ins, json[1]);
         fill(task->outs, json[2]);
@@ -275,7 +257,7 @@ struct Common {
 
     static constexpr int O1_OCCUPIES_LIMIT = 2;
     static constexpr int O2_OCCUPIES_LIMIT = 2;
-    static constexpr int TIMES_PER_RANDOM = 3;
+    static constexpr int TIMES_PER_RANDOM = 2;
 
     static CommonHandle fromJson(const nlohmann::json &json) {
         auto common = std::make_shared<Common>();
@@ -734,8 +716,7 @@ struct Schedule {
         int count = 0;
         TaskHandle tail;
         for (auto &item: json["records"]) {
-            ++ count;
-            auto task = Task::fromJson(schedule->common->operands, item);
+            auto task = Task::fromJson(++ count, schedule->common->operands, item);
             if (not tail) {
                 schedule->head = task;
                 tail = task;
@@ -799,7 +780,7 @@ struct Schedule {
         hash_calculated = true;
         hash_value = 0;
         LOOP(task, head) {
-            hash_value = hash_value * 131ull + task->hash();
+            hash_value = hash_value * 131ull + task->id;
         }
         return hash_value;
     }
