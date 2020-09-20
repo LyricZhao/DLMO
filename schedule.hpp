@@ -33,7 +33,7 @@ struct Operand {
     // Temporary uses
     bool on_device = false, occurred = false;
 
-    explicit Operand(size_t size, int id, nlohmann::json attr):
+    explicit Operand(size_t size, int id, const nlohmann::json &attr):
         size(size), id(id), attr(attr) {}
 
     void clear() {
@@ -93,11 +93,10 @@ struct Task {
             return json;
         };
         auto json = nlohmann::json::array();
-        json.push_back(name);
-        json.push_back(usage_to_json(ins));
-        json.push_back(usage_to_json(outs));
-        json.push_back(workspace);
-        json.push_back(duration);
+        json["name"] = name;
+        json["attr"] = attr;
+        json["ins"] = usage_to_json(ins);
+        json["outs"] = usage_to_json(outs);
         return json;
     }
 
@@ -663,7 +662,7 @@ struct Common {
         tail->next = nullptr;
     }
 
-    void restore(TaskHandle &head) const {
+    void restore(TaskHandle &head) {
         // Analyze topology
         analyzeTopology(head);
 
@@ -682,24 +681,29 @@ struct Common {
                 task = new_task;
             }
         }
+
+        // Add attributes
+        LOOP(task, head) {
+            assert(attrs.count(task->id));
+            task->attr = attrs[task->id];
+        }
     }
 
     nlohmann::json toJson(TaskHandle &head) {
         nlohmann::json json;
 
-        // Push operands
-        json["operands"] = nlohmann::json::array();
-        auto &operands_json = json["operands"];
-        for (auto &operand: operands) {
-            auto operand_json = nlohmann::json::array({operand->id, operand->size});
-            operands_json.push_back(operand_json);
-        }
-
         // Push tasks
-        json["records"] = nlohmann::json::array();
-        auto &records_json = json["records"];
+        json["code"] = nlohmann::json::array();
+        auto &records_json = json["code"];
         LOOP(task, head) {
             records_json.push_back(task->toJson());
+        }
+
+        // Push operands
+        json["data"] = nlohmann::json::array();
+        auto &operands_json = json["data"];
+        for (auto &operand: operands) {
+            operands_json.push_back(operand->attr);
         }
 
         return json;
@@ -800,34 +804,20 @@ struct Schedule {
         schedule->common->analyzeShare(schedule->head);
         schedule->common->refactor(schedule->head);
 
-        // Simple debugging checks
-        // schedule->common->restore(schedule->head);
-        // if (schedule->common->check(schedule->head)) {
-        //     error("Check failed after restore.");
-        // }
-        // schedule->common->refactor(schedule->head);
-
         return std::make_pair(schedule, count);
     }
 
-    void dumpToFile(const std::string &path, bool restore=true, bool not_change=true) {
-        // Restore to the format with .dealloc
-        if (restore) {
-            common->restore(head);
-            if (common->check(head)) {
-                error("Check failed while dumping to file.\n");
-            }
+    void restoreAndDumpToFile(const std::string &path) {
+        // Restore to the format with attributes, .dealloc and .share
+        common->restore(head);
+        if (common->check(head)) {
+            error("Check failed while dumping to file.\n");
         }
 
         // Dump into json
         auto json = common->toJson(head);
         std::ofstream file(path);
         file << json.dump(4) << std::endl;
-
-        // Recover to original
-        if (restore and not_change) {
-            common->refactor(head);
-        }
     }
 
     std::string info() {

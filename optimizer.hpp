@@ -110,5 +110,10 @@ public:
         printf("   > Time used: %s\n", prettyNanoseconds(timer.tik()).c_str());
         printf("   > Best: {%s}\n", best->info().c_str());
         printf("   > Satisfy memory: %s\n", best->peak_memory <= limit ? "true" : "false");
+
+        // Write result
+        printf(" > Writing result into path best.json ... ");
+        best->restoreAndDumpToFile("best.json");
+        printf("OK!\n");
     }
 };
