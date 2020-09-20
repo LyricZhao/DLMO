@@ -28,11 +28,13 @@ struct Operand {
     // Can be shared by other schedules
     size_t size = 0;
     int id = 0;
+    nlohmann::json attr;
 
     // Temporary uses
     bool on_device = false, occurred = false;
 
-    explicit Operand(size_t size, int id): size(size), id(id) {}
+    explicit Operand(size_t size, int id, nlohmann::json attr):
+        size(size), id(id), attr(attr) {}
 
     void clear() {
         on_device = occurred = false;
@@ -67,8 +69,10 @@ struct Task {
     int time_stamp;
     size_t execution_memory;
     std::vector<OperandHandle> to_dealloc_after;
+    nlohmann::json attr;
 
     TaskHandle copy() const {
+        // Attr will be not copied for saving memory
         auto new_task = std::make_shared<Task>();
         new_task->name = name;
         new_task->workspace = workspace;
@@ -173,6 +177,7 @@ struct Task {
         fill(task->outs, json["outs"]);
         task->workspace = json["workspace"];
         task->duration = Unit::us(static_cast<double>(json["time"]));
+        task->attr = json["attr"];
 
         // Detect inplace
         std::set<OperandHandle> ins;
@@ -257,12 +262,13 @@ struct Common {
     std::set<OperandHandle> already_on;
     std::set<OperandHandle> not_dealloc;
     std::map<int, TaskHandle> real_task;
+    std::map<int, nlohmann::json> attrs;
 
     static constexpr int O1_OCCUPIES_LIMIT = 2;
     static constexpr int O2_OCCUPIES_LIMIT = 2;
     static constexpr int TIMES_PER_RANDOM = 1;
 
-    static CommonHandle fromJson(const nlohmann::json &json) {
+    static CommonHandle fromJson(nlohmann::json &json) {
         auto common = std::make_shared<Common>();
         auto &operands = common->operands;
         for (auto &item: json) {
@@ -271,7 +277,8 @@ struct Common {
             if (id >= operands.size()) {
                 operands.resize(id + 1);
             }
-            operands[id] = std::make_shared<Operand>(size, id);
+            item.erase("size");
+            operands[id] = std::make_shared<Operand>(size, id, item);
         }
         return common;
     }
@@ -522,6 +529,12 @@ struct Common {
             }
         }
         return peak_memory;
+    }
+
+    void recordAttributes(TaskHandle &head) {
+        LOOP(task, head) {
+            attrs[task->id] = task->attr;
+        }
     }
 
     static std::vector<Occupy> analyzeOccupies(TaskHandle &head, size_t peak_memory, uint64_t origin_time) {
@@ -782,6 +795,7 @@ struct Schedule {
         }
 
         // Analyze common elements and refactor to the format without .dealloc and .share
+        schedule->common->recordAttributes(schedule->head);
         schedule->common->analyzePlacement(schedule->head);
         schedule->common->analyzeShare(schedule->head);
         schedule->common->refactor(schedule->head);
