@@ -11,8 +11,6 @@
 #include "json.hpp"
 #include "utils.hpp"
 
-// TODO: support .share operator
-
 struct Operand;
 typedef std::shared_ptr<Operand> OperandHandle;
 
@@ -150,6 +148,10 @@ struct Task {
         return name == ".dealloc";
     }
 
+    bool isShare() const {
+        return name == ".share";
+    }
+
     bool isForbidden() const {
         return name == ".host2device" or name == ".device2host" or name == ".sync" or name == ".alloc";
     }
@@ -254,10 +256,11 @@ struct Common {
     std::vector<OperandHandle> operands;
     std::set<OperandHandle> already_on;
     std::set<OperandHandle> not_dealloc;
+    std::map<int, TaskHandle> real_task;
 
     static constexpr int O1_OCCUPIES_LIMIT = 2;
     static constexpr int O2_OCCUPIES_LIMIT = 2;
-    static constexpr int TIMES_PER_RANDOM = 2;
+    static constexpr int TIMES_PER_RANDOM = 1;
 
     static CommonHandle fromJson(const nlohmann::json &json) {
         auto common = std::make_shared<Common>();
@@ -344,6 +347,53 @@ struct Common {
         for (auto &operand: operands) {
             if (operand->on_device) {
                 not_dealloc.insert(operand);
+            }
+        }
+    }
+
+    void analyzeShare(TaskHandle &head) {
+        std::map<OperandHandle, OperandHandle> real_usage;
+        std::set<OperandHandle> generated;
+        LOOP(task, head) {
+            if (task->isShare()) {
+                assert(task->ins.size() == 1);
+                auto source = task->ins[0].operand;
+                // Operand renaming
+                // All the shared operands will be rename to the first
+                if (real_usage.count(source)) {
+                    source = real_usage[source];
+                }
+                assert(not real_usage.count(source));
+                for (auto &usage: task->outs) {
+                    assert(not generated.count(usage.operand));
+                    generated.insert(usage.operand);
+                    real_usage[usage.operand] = source;
+                }
+            } else if (not task->isDealloc()) {
+                bool hasShared = false;
+                auto check = [&hasShared, real_usage](std::vector<OperandUsage> &usages) {
+                    for (auto &usage: usages) {
+                        if (real_usage.count(usage.operand)) {
+                            hasShared = true;
+                        }
+                    }
+                };
+                check(task->ins);
+                check(task->outs);
+                // Backup and rename
+                if (hasShared) {
+                    auto backup = std::make_shared<Task>();
+                    auto gen = [&real_usage](std::vector<OperandUsage> &usages, std::vector<OperandUsage> &backup_usages) {
+                        for (auto &usage: usages) {
+                            auto real = real_usage.count(usage.operand) ? real_usage[usage.operand] : usage.operand;
+                            backup_usages.push_back(OperandUsage {usage.operand});
+                            usage.operand = real;
+                        }
+                    };
+                    gen(task->ins, backup->ins);
+                    gen(task->outs, backup->outs);
+                    real_task[task->id] = backup;
+                }
             }
         }
     }
@@ -586,7 +636,7 @@ struct Common {
         TaskHandle loop_head = head, tail;
         head = nullptr;
         LOOP(task, loop_head) {
-            if (not task->isDealloc()) {
+            if (not (task->isDealloc() or task->isShare())) {
                 if (not tail) {
                     tail = head = task;
                     task->prev = nullptr;
@@ -731,8 +781,9 @@ struct Schedule {
             error("Origin schedule in file %s check failed.", path.c_str());
         }
 
-        // Analyze common elements and refactor to the format without .dealloc
+        // Analyze common elements and refactor to the format without .dealloc and .share
         schedule->common->analyzePlacement(schedule->head);
+        schedule->common->analyzeShare(schedule->head);
         schedule->common->refactor(schedule->head);
 
         // Simple debugging checks
@@ -790,9 +841,9 @@ struct Comparator {
     uint64_t origin_time;
     size_t limit;
 
-    static constexpr double MEMORY_FACTOR = 0.5;
+    static constexpr double MEMORY_FACTOR = 0.6;
     static constexpr double TIME_FACTOR = 1.0 - MEMORY_FACTOR;
-    static constexpr double RECONSIDER_RATIO = 2;
+    static constexpr double RECONSIDER_RATIO = 1.2;
     static constexpr double TIME_REQUIREMENT_RATIO = 1.01;
 
     double score(const ScheduleHandle &s) const {
