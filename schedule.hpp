@@ -92,7 +92,7 @@ struct Task {
             }
             return json;
         };
-        auto json = nlohmann::json::array();
+        nlohmann::json json;
         json["name"] = name;
         json["attr"] = attr;
         json["ins"] = usage_to_json(ins);
@@ -684,7 +684,6 @@ struct Common {
 
         // Add attributes
         LOOP(task, head) {
-            assert(attrs.count(task->id));
             task->attr = attrs[task->id];
         }
     }
@@ -794,13 +793,13 @@ struct Schedule {
             }
         }
         tail->next = nullptr;
-        if (schedule->common->check(schedule->head)) {
-            error("Origin schedule in file %s check failed.", path.c_str());
-        }
 
         // Analyze common elements and refactor to the format without .dealloc and .share
         schedule->common->recordAttributes(schedule->head);
         schedule->common->analyzePlacement(schedule->head);
+        if (not schedule->common->check(schedule->head)) {
+            error("Origin schedule in file %s check failed.", path.c_str());
+        }
         schedule->common->analyzeShare(schedule->head);
         schedule->common->refactor(schedule->head);
 
@@ -810,7 +809,7 @@ struct Schedule {
     void restoreAndDumpToFile(const std::string &path) {
         // Restore to the format with attributes, .dealloc and .share
         common->restore(head);
-        if (common->check(head)) {
+        if (not common->check(head)) {
             error("Check failed while dumping to file.\n");
         }
 
