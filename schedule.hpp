@@ -168,11 +168,11 @@ struct Task {
 
         // Fill task
         task->id = id;
-        task->name = json[0];
-        fill(task->ins, json[1]);
-        fill(task->outs, json[2]);
-        task->workspace = json[3];
-        task->duration = Unit::us(static_cast<double>(json[4]));
+        task->name = json["name"];
+        fill(task->ins, json["ins"]);
+        fill(task->outs, json["outs"]);
+        task->workspace = json["workspace"];
+        task->duration = Unit::us(static_cast<double>(json["time"]));
 
         // Detect inplace
         std::set<OperandHandle> ins;
@@ -266,8 +266,8 @@ struct Common {
         auto common = std::make_shared<Common>();
         auto &operands = common->operands;
         for (auto &item: json) {
-            int id = item[0];
-            size_t size = item[1];
+            int id = item["id"];
+            size_t size = item["size"];
             if (id >= operands.size()) {
                 operands.resize(id + 1);
             }
@@ -760,12 +760,12 @@ struct Schedule {
 
         // Operands
         auto schedule = std::make_shared<Schedule>();
-        schedule->common = Common::fromJson(json["operands"]);
+        schedule->common = Common::fromJson(json["data"]);
 
         // Records
         int count = 0;
         TaskHandle tail;
-        for (auto &item: json["records"]) {
+        for (auto &item: json["code"]) {
             auto task = Task::fromJson(++ count, schedule->common->operands, item);
             if (not tail) {
                 schedule->head = task;

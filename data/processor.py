@@ -1,15 +1,11 @@
-from collections import namedtuple
 import json
 import os
 import functools
 
-Operand = namedtuple('Operand', ['id', 'size'])
-Record = namedtuple('Record', ['name', 'ins', 'outs', 'workspace', 'time'])
 
-
-def same(l):
-    x = l[0]
-    for y in l[1:]:
+def same(array):
+    x = array[0]
+    for y in array[1:]:
         if x != y:
             return False
     return True
@@ -89,7 +85,6 @@ def merge(function_path, timeline_path, memory_path, pattern_path):
     operands = []
     sizeof = {'Float32': 4, 'Int64': 8, 'Uint8': 1}
     for operand in data:
-        identity = operand['id']
         if not operand['type']:
             # TODO: fix it
             size = 0
@@ -97,7 +92,8 @@ def merge(function_path, timeline_path, memory_path, pattern_path):
             size = (functools.reduce(lambda x, y: x * y, operand['shape']) if operand['shape'] else 1) * \
                    sizeof[operand['type']]
         assert operand['arch'] == 'CUDA'
-        operands.append(Operand(identity, size))
+        operand['size'] = size
+        operands.append(operand)
 
     # Generate code
     average = lambda l: sum(l[2:]) / (len(l) - 2)
@@ -115,16 +111,15 @@ def merge(function_path, timeline_path, memory_path, pattern_path):
         if name == 'reshape':
             assert last_name == '.share'
         else:
-            record = Record(name, code['ins'], code['outs'],
-                            workspaces[name][index + op_counts[name]],  # TODO: temporarily choose the second
-                            average(times[name][index::op_counts[name]]) if not name.startswith('.') else 0)
-            records.append(record)
+            code['workspace'] = workspaces[name][index + op_counts[name]]
+            code['time'] = average(times[name][index::op_counts[name]]) if not name.startswith('.') else 0
+            records.append(code)
         last_name = name
 
     # Write into file
-    content = {'operands': operands, 'records': records}
+    content = {'code': records, 'data': operands}
     with open(pattern_path, 'w') as file:
-        json.dump(content, file)
+        json.dump(content, file, indent=4)
 
 
 if __name__ == '__main__':
