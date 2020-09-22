@@ -109,6 +109,15 @@ struct Task {
         return task;
     }
 
+    static TaskHandle share(const OperandHandle &source, const OperandHandle &view) {
+        auto task = std::make_shared<Task>();
+        task->name = ".share";
+        // .share operator does not have attributes
+        task->ins.push_back(OperandUsage {source});
+        task->outs.push_back(OperandUsage {view});
+        return task;
+    }
+
     void clear() {
         time_stamp = 0;
         execution_memory = 0;
@@ -237,7 +246,6 @@ struct Occupy {
         }
         // Re-computation (memory decreased)
         for (auto &usage: use->ins) {
-            // TODO: simplify
             if (gen->contains(usage.operand) and (not usage.prev_use or usage.prev_use->time_stamp < peak_time_stamp)) {
                 memory_increased -= usage.operand->size;
             }
@@ -262,6 +270,7 @@ struct Common {
     std::set<OperandHandle> not_dealloc;
     std::map<int, TaskHandle> real_task;
     std::map<int, nlohmann::json> attrs;
+    nlohmann::json inputs, outputs, version;
 
     static constexpr int O1_OCCUPIES_LIMIT = 2;
     static constexpr int O2_OCCUPIES_LIMIT = 2;
@@ -270,7 +279,7 @@ struct Common {
     static CommonHandle fromJson(nlohmann::json &json) {
         auto common = std::make_shared<Common>();
         auto &operands = common->operands;
-        for (auto &item: json) {
+        for (auto &item: json["data"]) {
             int id = item["id"];
             size_t size = item["size"];
             if (id >= operands.size()) {
@@ -279,6 +288,9 @@ struct Common {
             item.erase("size");
             operands[id] = std::make_shared<Operand>(size, id, item);
         }
+        common->inputs = json["inputs"];
+        common->outputs = json["outputs"];
+        common->version = json["version"];
         return common;
     }
 
@@ -296,6 +308,7 @@ struct Common {
             if (task->isDealloc()) {
                 for (auto &usage: task->outs) {
                     if (not usage.operand->on_device) {
+                        error("Operand %d not on device (.dealloc)\n", usage.operand->id);
                         return false;
                     }
                     usage.operand->on_device = false;
@@ -303,6 +316,7 @@ struct Common {
             } else {
                 for (auto &usage: task->ins) {
                     if (not usage.operand->on_device) {
+                        error("Operand %d not on device (normal operators)\n", usage.operand->id);
                         return false;
                     }
                 }
@@ -315,9 +329,11 @@ struct Common {
         // Check final status
         for (auto &operand: operands) {
             if (operand->on_device and not not_dealloc.count(operand)) {
+                error("Forget to dealloc %d\n", operand->id);
                 return false;
             }
             if (not operand->on_device and not_dealloc.count(operand)) {
+                error("Operand %d has been dealloc but should not\n", operand->id);
                 return false;
             }
         }
@@ -418,7 +434,7 @@ struct Common {
         std::map<OperandHandle, TaskHandle> gen;
         LOOP(task, head) {
             assert(not task->isDealloc());
-            size_t version = 0;
+            size_t hash = 0;
             for (auto &usage: task->ins) {
                 usage.gen = gen[usage.operand];
                 usage.prev_use = prev_use[usage.operand];
@@ -435,10 +451,10 @@ struct Common {
                         gen_usage.next_use = task;
                     }
                 }
-                version = version * 131ull + usage.version;
+                hash = hash * 131ull + usage.version;
             }
             for (auto &usage: task->outs) {
-                usage.version = version * 131ull + usage.operand->id;
+                usage.version = hash * 131ull + usage.operand->id;
                 usage.gen = gen[usage.operand] = task;
                 usage.prev_use = prev_use[usage.operand] = nullptr;
             }
@@ -663,6 +679,44 @@ struct Common {
     }
 
     void restore(TaskHandle &head) {
+        auto insert_between = [](TaskHandle &first, TaskHandle &new_task, TaskHandle &second) {
+            new_task->next = second;
+            if (second) {
+                second->prev = new_task;
+            }
+            new_task->prev = first;
+            if (first) {
+                first->next = new_task;
+            }
+        };
+
+        // Restore .share
+        std::set<OperandHandle> restored;
+        LOOP(task, head) {
+            if (real_task.count(task->id)) {
+                std::vector<TaskHandle> to_insert;
+                auto restore = [&restored, insert_between, &to_insert](std::vector<OperandUsage> &origin, std::vector<OperandUsage> &current) {
+                    for (int i = 0; i < origin.size(); ++ i) {
+                        if (origin[i].operand != current[i].operand and not restored.count(origin[i].operand)) {
+                            restored.insert(origin[i].operand);
+                            auto new_task = Task::share(current[i].operand, origin[i].operand);
+                            to_insert.push_back(new_task);
+                            current[i].operand = origin[i].operand;
+                        }
+                    }
+                };
+                restore(real_task[task->id]->ins, task->ins);
+                restore(real_task[task->id]->outs, task->outs);
+                if (not to_insert.empty()) {
+                    auto prev = task->prev;
+                    for (auto &new_task: to_insert) {
+                        insert_between(prev, new_task, task);
+                        prev = new_task;
+                    }
+                }
+            }
+        }
+
         // Analyze topology
         analyzeTopology(head);
 
@@ -671,13 +725,7 @@ struct Common {
             // Create new .dealloc
             if (not task->to_dealloc_after.empty()) {
                 auto new_task = Task::dealloc(task->to_dealloc_after);
-                auto origin_next = task->next;
-                task->next = new_task;
-                new_task->prev = task;
-                new_task->next = origin_next;
-                if (origin_next) {
-                    origin_next->prev = new_task;
-                }
+                insert_between(task, new_task, task->next);
                 task = new_task;
             }
         }
@@ -704,6 +752,11 @@ struct Common {
         for (auto &operand: operands) {
             operands_json.push_back(operand->attr);
         }
+
+        // TODO: inputs, outputs and version
+        json["inputs"] = inputs;
+        json["outputs"] = outputs;
+        json["version"] = version;
 
         return json;
     }
@@ -776,7 +829,7 @@ struct Schedule {
 
         // Operands
         auto schedule = std::make_shared<Schedule>();
-        schedule->common = Common::fromJson(json["data"]);
+        schedule->common = Common::fromJson(json);
 
         // Records
         int count = 0;

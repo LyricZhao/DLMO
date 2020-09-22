@@ -8,7 +8,8 @@
 #include "utils.hpp"
 
 class Optimizer {
-    static constexpr int SEARCH_LIMIT = 3000;
+    static constexpr int SEARCH_LIMIT = 1500;
+    static constexpr int PRINT_FREQUENCY = 300;
 
     size_t limit;
 
@@ -74,7 +75,6 @@ public:
             }
 
             ++ count;
-            printf(" > Progress (%d): %s, %s\n", count, prettyBytes(top->peak_memory).c_str(), prettyNanoseconds(top->total_time).c_str());
 
             // Substitute
             std::vector<ScheduleHandle> substitutions = generateSubstitutions(top);
@@ -101,6 +101,10 @@ public:
             if (count == SEARCH_LIMIT) {
                 printf(" > Reach search limit, stop searching\n");
                 break;
+            }
+
+            if (count % PRINT_FREQUENCY == 0) {
+                printf(" > Progress (%d): %s, %s\n", count, prettyBytes(top->peak_memory).c_str(), prettyNanoseconds(top->total_time).c_str());
             }
         }
 

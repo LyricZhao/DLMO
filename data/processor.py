@@ -14,9 +14,9 @@ def same(array):
 def merge(function_path, timeline_path, memory_path, pattern_path):
     # Read traced functions
     with open(function_path, 'r') as file:
-        functions = json.load(file)
-        codes = functions['code']
-        data = functions['data']
+        schedule = json.load(file)
+        codes = schedule['code']
+        data = schedule['data']
         first_code, last_code = None, None
         for code in codes:
             if code['name'].startswith('.'):
@@ -117,7 +117,8 @@ def merge(function_path, timeline_path, memory_path, pattern_path):
         last_name = name
 
     # Write into file
-    content = {'code': records, 'data': operands}
+    content = {'code': records, 'data': operands, 'inputs': schedule['inputs'],
+               'outputs': schedule['outputs'], 'version': schedule['version']}
     with open(pattern_path, 'w') as file:
         json.dump(content, file, indent=4)
 
