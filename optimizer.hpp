@@ -52,7 +52,7 @@ public:
         return substitutions;
     };
 
-    void optimize(const ScheduleHandle &origin) const {
+    void optimize(const ScheduleHandle &origin, const std::string &output_path) const {
         ScheduleHandle best = origin;
         auto comparator = Comparator{origin->analyze().second, limit};
         std::set<size_t> hash_set;
@@ -116,8 +116,8 @@ public:
         printf("   > Satisfy memory: %s\n", best->peak_memory <= limit ? "true" : "false");
 
         // Write result
-        printf(" > Writing result into path best.json ... ");
-        best->restoreAndDumpToFile("best.json");
+        printf(" > Writing result into path %s ... ", output_path.c_str());
+        best->restoreAndDumpToFile(output_path);
         printf("OK!\n");
     }
 };

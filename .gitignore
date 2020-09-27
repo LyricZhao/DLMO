@@ -1,9 +1,6 @@
 # Cases
 data/**/
 
-# Outputs
-best.json
-
 # JetBrains
 .idea
 cmake-build-*

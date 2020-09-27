@@ -5,18 +5,15 @@
 #include "utils.hpp"
 
 int main(int argc, char **argv) {
-    if (argc != 2) {
-        std::cerr << "Usage: dlmo <path_to_config>" << std::endl;
+    if (argc != 4) {
+        std::cerr << "Usage: dlmo <input> <output> <limit>" << std::endl;
         exit(0);
     }
 
     // Run cases
-    std::ifstream config(argv[1]);
-    std::string path, limit;
-    while (config >> path >> limit) {
-        auto runner = Runner(path, Unit::fromText(limit));
-        runner.run();
-    }
+    std::string input(argv[1]), output(argv[2]), limit(argv[3]);
+    auto runner = Runner(input, output, Unit::fromText(limit));
+    runner.run();
 
     return 0;
 }

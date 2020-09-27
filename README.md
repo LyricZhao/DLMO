@@ -85,38 +85,31 @@ cmake .. -DCMAKE_BUILD_TYPE=Debug
 cmake .. -DCMAKE_BUILD_TYPE=Release
 
 make
-cd ..
 ```
 
-b. Create a `configs` file in `data` (one line with path and memory bound):
+b. Run:
 
-```
-data/resnet50-32/pattern.json 1GiB
-data/resnet152-32/pattern.json 2.1GiB
-```
-
-c. Run:
-
-```
-./build/dlmo data/configs
+```bash
+# Usage: dlmo <input> <output> <limit>
+./dlmo ../data/resnet152-32/pattern.json optimized.json 2.1GiB
 ```
 
-d. The output should be like (**you may have to read the source code and adjust the parameters**):
+c. The output should be like (**you may have to read the source code and adjust the parameters**):
 
 ```
-Running case data/resnet152-32/pattern.json (2356 operators) with optimizer (limit 1024.000000 MiB) ...
+Running case ../data/resnet152-32/pattern.json (2356 operators) with optimizer (limit 2.100000 GiB) ...
  > Start back-tracing search from source (peak memory: 8.019928 GiB, total time: 229.738614 ms)
  > Progress (300): 2.660553 GiB, 256.848531 ms
- > Progress (600): 1.800764 GiB, 287.683124 ms
- > Progress (900): 1.740950 GiB, 294.932769 ms
- > Progress (1200): 1.201523 GiB, 310.821406 ms
+ > Progress (600): 2.094578 GiB, 276.179152 ms
+ > Progress (900): 2.094578 GiB, 276.605152 ms
+ > Progress (1200): 2.082615 GiB, 276.739483 ms
  > Reach search limit, stop searching
  > Result:
    > Schedules searched: 1500
-   > Time used: 30178.606000 ms
-   > Best: {peak memory: 1.158930 GiB, total time: 313.424069 ms}
-   > Satisfy memory: false
- > Writing result into path best.json ... OK!
+   > Time used: 26677.157000 ms
+   > Best: {peak memory: 2.094578 GiB, total time: 274.821156 ms}
+   > Satisfy memory: true
+ > Writing result into path optimized.json ... OK!
 ```
 
-e. The newly generated IR JSON is named as `best.json`.
+d. The newly generated IR JSON is named as `<output>`.

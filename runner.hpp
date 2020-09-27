@@ -9,18 +9,18 @@
 #include "utils.hpp"
 
 class Runner {
-    std::string path;
+    std::string input, output;
     size_t limit;
 
 public:
-    Runner(std::string path, size_t limit): path(std::move(path)), limit(limit) {}
+    Runner(const std::string &input, const std::string &output, size_t limit): input(input), output(output), limit(limit) {}
 
     void run() {
         ScheduleHandle schedule;
         int count;
-        std::tie(schedule, count) = Schedule::fromFile(path);
+        std::tie(schedule, count) = Schedule::fromFile(input);
         auto optimizer = Optimizer(limit);
-        printf("Running case %s (%d operators) with %s ... \n", path.c_str(), count, optimizer.name().c_str());
-        optimizer.optimize(schedule);
+        printf("Running case %s (%d operators) with %s ... \n", input.c_str(), count, optimizer.name().c_str());
+        optimizer.optimize(schedule, output);
     }
 };
