@@ -695,12 +695,14 @@ struct Common {
         LOOP(task, head) {
             if (real_task.count(task->id)) {
                 std::vector<TaskHandle> to_insert;
-                auto restore = [&restored, insert_between, &to_insert](std::vector<OperandUsage> &origin, std::vector<OperandUsage> &current) {
+                auto restore = [&restored, &to_insert](std::vector<OperandUsage> &origin, std::vector<OperandUsage> &current) {
                     for (int i = 0; i < origin.size(); ++ i) {
-                        if (origin[i].operand != current[i].operand and not restored.count(origin[i].operand)) {
-                            restored.insert(origin[i].operand);
-                            auto new_task = Task::share(current[i].operand, origin[i].operand);
-                            to_insert.push_back(new_task);
+                        if (origin[i].operand != current[i].operand) {
+                            if (not restored.count(origin[i].operand)) {
+                                restored.insert(origin[i].operand);
+                                auto new_task = Task::share(current[i].operand, origin[i].operand);
+                                to_insert.push_back(new_task);
+                            }
                             current[i].operand = origin[i].operand;
                         }
                     }
